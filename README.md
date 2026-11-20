@@ -4,7 +4,8 @@ Node.js 22+ · Express 5 · MongoDB Atlas. Simple modular monolith without Redis
 
 ## Product behavior
 
-- Admin creates quizzes and publishes them. Published quizzes are available at any time; no schedules or capacity seats.
+- Admin creates and publishes quizzes, and may **unpublish** to stop new registrations. Existing attempts can still resume, autosave and submit. There are no schedules or capacity seats.
+- Published quizzes can update their **title and instructions** without changing grading. Full question/settings edits require the quiz to be unpublished **and have no attempts**; after any attempt exists, question IDs, answer keys and duration remain locked to protect saved answers and scores.
 - Student enters full name, email and phone, selects a quiz, then starts. One attempt **per normalized email per quiz**, enforced by MongoDB's unique index. No roll numbers or account signup.
 - A single quiz-wide deadline starts when the attempt begins (`durationMinutes`; e.g. 60 minutes). The server enforces `expiresAt`. Question time limits do not exist.
 - Student answers are versioned and autosaved. Refresh or reconnect can restore the current attempt with its signed cookie. Final submission is idempotent and server-graded for MCQ/True-False; coding/short text is reviewed by admin.
@@ -58,7 +59,10 @@ When the timer expires, late changes are rejected and only saved answers are eli
 
 All endpoints use the admin cookie.
 
-- `POST /api/v1/admin/quizzes` · `GET /api/v1/admin/quizzes` · `PUT /api/v1/admin/quizzes/:id` · `PATCH /api/v1/admin/quizzes/:id/publish`: manage/publish quiz.
+- `POST /api/v1/admin/quizzes` · `GET /api/v1/admin/quizzes` · `GET /api/v1/admin/quizzes/:id`: create/list/fetch.
+- `PUT /api/v1/admin/quizzes/:id`: edit entire unpublished quiz only when no attempt exists.
+- `PATCH /api/v1/admin/quizzes/:id/details`: edit only `title` and `description`, even when published or attempted.
+- `PATCH /api/v1/admin/quizzes/:id/publish`: `{ "isPublished": true }` to publish or `false` to unpublish; repeatable and non-destructive.
 - `GET /api/v1/admin/results?quizId=<id>&limit=25`: paginated results, cursor pagination. Optional exact `email`, `status`, `gradingStatus` filters.
 - `GET /api/v1/admin/results/stats?quizId=<id>`: live attempt counts.
 - `GET /api/v1/admin/results/export?quizId=<id>`: streamed CSV of all matching results, spreadsheet-formula safe.

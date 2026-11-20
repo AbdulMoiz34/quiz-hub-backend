@@ -40,6 +40,11 @@ export const quizSchema = Joi.object({
   questions: Joi.array().items(questionSchema).min(1).max(250).required(),
 });
 
+export const quizDetailsSchema = Joi.object({
+  title: Joi.string().trim().min(2).max(150),
+  description: Joi.string().trim().allow("").max(3000),
+}).min(1);
+
 export const publishSchema = Joi.object({
-  isPublished: Joi.boolean().valid(true).required(),
+  isPublished: Joi.boolean().required(),
 });

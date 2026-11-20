@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { once } from "node:events";
-import { quizSchema } from "../src/validations/quiz.validation.js";
+import { quizSchema, quizDetailsSchema, publishSchema } from "../src/validations/quiz.validation.js";
 import { createApp } from "../src/app.js";
 
 const validQuiz = {
@@ -70,4 +70,20 @@ test("admin quiz endpoints require a valid admin cookie", async () => {
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("publication can be reversed without changing quiz content", () => {
+  assert.equal(publishSchema.validate({ isPublished: true }).error, undefined);
+  assert.equal(publishSchema.validate({ isPublished: false }).error, undefined);
+  assert.ok(publishSchema.validate({ isPublished: "maybe" }).error);
+  assert.ok(publishSchema.validate({ isPublished: true, questions: [] }).error);
+});
+
+test("details-only updates cannot modify questions, duration or answer keys", () => {
+  assert.equal(quizDetailsSchema.validate({ title: "Updated title", description: "Read carefully" }).error, undefined);
+  assert.equal(quizDetailsSchema.validate({ description: "" }).error, undefined);
+  assert.ok(quizDetailsSchema.validate({}).error);
+  assert.ok(quizDetailsSchema.validate({ durationMinutes: 30 }).error);
+  assert.ok(quizDetailsSchema.validate({ questions: validQuiz.questions }).error);
+  assert.ok(quizDetailsSchema.validate({ isPublished: true }).error);
 });

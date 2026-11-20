@@ -108,10 +108,10 @@ async function run() {
   const quizId = created.id;
   quiz = await Quiz.findById(quizId);
   assert.ok(quiz);
-  const questionId = String(quiz.questions[0]._id);
-  const manualQuestionId = String(quiz.questions[1]._id);
-  const correctAnswers = [{ questionId, answer: "B" }];
-  const wrongAnswers = [{ questionId, answer: "A" }];
+  let questionId = String(quiz.questions[0]._id);
+  let manualQuestionId = String(quiz.questions[1]._id);
+  let correctAnswers = [{ questionId, answer: "B" }];
+  let wrongAnswers = [{ questionId, answer: "A" }];
 
   const unpublished = expectStatus(await http("student/quizzes"), 200, "published quizzes");
   assert.ok(!unpublished.some((entry) => entry.id === quizId),
@@ -127,6 +127,34 @@ async function run() {
   assert.equal(published.isPublished, true);
   const visible = expectStatus(await http("student/quizzes"), 200, "published quizzes available");
   assert.ok(visible.some((entry) => entry.id === quizId && entry.durationMinutes === 60));
+  // Publication is reversible before any attempt; changes cannot touch answer keys.
+  const unpublishedQuiz = expectStatus(await http("admin/quizzes/" + quizId + "/publish", {
+    method: "PATCH", cookie: adminCookie, body: { isPublished: false },
+  }), 200, "admin unpublishes quiz");
+  assert.equal(unpublishedQuiz.isPublished, false);
+  const hiddenQuizzes = expectStatus(await http("student/quizzes"), 200, "unpublished quiz hidden");
+  assert.ok(!hiddenQuizzes.some((entry) => entry.id === quizId));
+  expectStatus(await http("student/attempts/start", {
+    method: "POST", body: {
+      quizId, studentName: "New student", email: "blocked-" + id + "@example.test",
+      phone: "03111111222", startKey: randomUUID(),
+    },
+  }), 404, "unpublished quiz rejects new attempts");
+  const updatedDraft = expectStatus(await http("admin/quizzes/" + quizId, {
+    method: "PUT", cookie: adminCookie,
+    body: { ...draftBody, title: draftBody.title + " revised" },
+  }), 200, "admin edits unpublished quiz before student attempts");
+  assert.equal(updatedDraft.id, quizId);
+  // Saving a full draft replaces question subdocuments. Load their final IDs
+  // before simulating student answer persistence and server grading.
+  quiz = await Quiz.findById(quizId);
+  questionId = String(quiz.questions[0]._id);
+  manualQuestionId = String(quiz.questions[1]._id);
+  correctAnswers = [{ questionId, answer: "B" }];
+  wrongAnswers = [{ questionId, answer: "A" }];
+  expectStatus(await http("admin/quizzes/" + quizId + "/publish", {
+    method: "PATCH", cookie: adminCookie, body: { isPublished: true },
+  }), 200, "admin republishes quiz");
   assert.ok(!visible.some((entry) => entry.correctAnswer != null),
     "Public quiz listing must not include answer keys");
 
@@ -151,6 +179,44 @@ async function run() {
   const firstBody = details("normal");
   const first = await start(firstBody);
   assert.equal(Date.parse(first.data.expiresAt) - Date.parse(first.data.startedAt), 60 * 60_000);
+
+  // After one attempt, changing questions or duration would corrupt saved
+  // answers and grading. Only the quiz's display details are editable.
+  const detailedQuiz = expectStatus(await http("admin/quizzes/" + quizId, {
+    cookie: adminCookie,
+  }), 200, "editor receives whether attempts exist");
+  assert.equal(detailedQuiz.hasAttempts, true);
+  expectStatus(await http("admin/quizzes/" + quizId, {
+    method: "PUT", cookie: adminCookie, body: { ...draftBody, durationMinutes: 20 },
+  }), 409, "cannot edit published quiz");
+  expectStatus(await http("admin/quizzes/" + quizId + "/details", {
+    method: "PATCH", cookie: adminCookie, body: { title: "Renamed assessment", description: "Follow instructions" },
+  }), 200, "published quiz details can be edited");
+  expectStatus(await http("admin/quizzes/" + quizId + "/details", {
+    method: "PATCH", cookie: adminCookie, body: { questions: [] },
+  }), 400, "details endpoint rejects question changes");
+
+  expectStatus(await http("admin/quizzes/" + quizId + "/publish", {
+    method: "PATCH", cookie: adminCookie, body: { isPublished: false },
+  }), 200, "unpublish while an attempt is active");
+  expectStatus(await http("admin/quizzes/" + quizId, {
+    method: "PUT", cookie: adminCookie, body: draftBody,
+  }), 409, "cannot edit question bank after unpublishing if attempts exist");
+  expectStatus(await http("student/attempts/start", {
+    method: "POST", body: {
+      quizId, studentName: "Late student", email: "late-" + id + "@example.test",
+      phone: "03111111222", startKey: randomUUID(),
+    },
+  }), 404, "unpublished quiz blocks new students even with existing attempts");
+
+  // Existing candidate may still resume and finish normally.
+  const resumedStart = expectStatus(await http("student/attempts/start", {
+    method: "POST", body: firstBody,
+  }), 200, "existing candidate may resume after unpublish");
+  assert.equal(resumedStart.id, first.data.id);
+  expectStatus(await http("admin/quizzes/" + quizId + "/publish", {
+    method: "PATCH", cookie: adminCookie, body: { isPublished: true },
+  }), 200, "republish after existing exam resumes");
   const current = expectStatus(await http("student/attempts/current", {
     cookie: first.cookie,
   }), 200, "resume started exam");
