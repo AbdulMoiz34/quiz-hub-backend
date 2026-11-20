@@ -3,6 +3,7 @@ import { adminAuth } from "../../middlewares/auth.middleware.js";
 import { validateReq } from "../../middlewares/validateReq.middleware.js";
 import { manualGradeSchema } from "../../validations/grading.validation.js";
 import { gradeManualAnswer, getAttemptForReview } from "../../controllers/grading.controller.js";
+import { deleteAttempt } from "../../controllers/attempt-admin.controller.js";
 
 export default function gradingRoutes(config) {
   const router = Router();
@@ -10,5 +11,6 @@ export default function gradingRoutes(config) {
 
   router.get("/:id", getAttemptForReview);
   router.patch("/:id/grade", validateReq(manualGradeSchema), gradeManualAnswer);
+  router.delete("/:id", deleteAttempt);
   return router;
 }
