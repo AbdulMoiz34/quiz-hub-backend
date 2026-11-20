@@ -1,18 +1,17 @@
 import mongoose from "mongoose";
 
-export async function connectDatabase(uri) {
+export async function connectDB(uri) {
   await mongoose.connect(uri, {
     maxPoolSize: 15,
-    serverSelectionTimeoutMS: 10000,
+    serverSelectionTimeoutMS: 10_000,
   });
+  console.info("MongoDB connected");
 }
 
 export function isDatabaseReady() {
   return mongoose.connection.readyState === 1;
 }
 
-export async function disconnectDatabase() {
-  if (mongoose.connection.readyState !== 0) {
-    await mongoose.disconnect();
-  }
+export async function disconnectDB() {
+  if (mongoose.connection.readyState !== 0) await mongoose.disconnect();
 }

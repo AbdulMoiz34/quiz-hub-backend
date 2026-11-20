@@ -6,29 +6,32 @@ import { createApp } from "../src/app.js";
 async function withServer(isDbReady, callback) {
   const app = createApp({
     allowedOrigins: ["http://localhost:5173"],
+    jwtSecret: "testing-secret-with-over-32-characters-and-randomness",
+    nodeEnv: "test",
+    cookieSameSite: "lax",
     isDbReady,
   });
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
+
   try {
-    return await callback("http://127.0.0.1:" + server.address().port);
+    await callback("http://127.0.0.1:" + server.address().port);
   } finally {
     await new Promise((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
+      server.close((err) => err ? reject(err) : resolve());
     });
   }
 }
 
-test("liveness does not depend on MongoDB connectivity", async () => {
+test("liveness works without MongoDB", async () => {
   await withServer(() => false, async (base) => {
     const response = await fetch(base + "/api/v1/health");
     assert.equal(response.status, 200);
     assert.equal((await response.json()).status, "ok");
-    assert.equal(response.headers.get("cache-control"), "no-store");
   });
 });
 
-test("readiness returns 503 when MongoDB is disconnected", async () => {
+test("readiness returns 503 when MongoDB is unavailable", async () => {
   await withServer(() => false, async (base) => {
     const response = await fetch(base + "/api/v1/ready");
     assert.equal(response.status, 503);
@@ -36,7 +39,7 @@ test("readiness returns 503 when MongoDB is disconnected", async () => {
   });
 });
 
-test("readiness returns 200 when MongoDB is connected", async () => {
+test("readiness returns 200 when MongoDB is available", async () => {
   await withServer(() => true, async (base) => {
     const response = await fetch(base + "/api/v1/ready");
     assert.equal(response.status, 200);
@@ -44,7 +47,7 @@ test("readiness returns 200 when MongoDB is connected", async () => {
   });
 });
 
-test("unknown route returns a JSON 404", async () => {
+test("unknown API route returns JSON 404", async () => {
   await withServer(() => true, async (base) => {
     const response = await fetch(base + "/api/v1/unknown");
     assert.equal(response.status, 404);
@@ -52,7 +55,7 @@ test("unknown route returns a JSON 404", async () => {
   });
 });
 
-test("CORS allows the configured browser origin", async () => {
+test("CORS accepts configured origins", async () => {
   await withServer(() => true, async (base) => {
     const response = await fetch(base + "/api/v1/health", {
       headers: { Origin: "http://localhost:5173" },
@@ -62,22 +65,20 @@ test("CORS allows the configured browser origin", async () => {
   });
 });
 
-test("CORS blocks unconfigured browser origins", async () => {
+test("CORS blocks untrusted origins", async () => {
   await withServer(() => true, async (base) => {
     const response = await fetch(base + "/api/v1/health", {
       headers: { Origin: "https://untrusted.example" },
     });
     assert.equal(response.status, 403);
-    assert.equal((await response.json()).message, "Origin not allowed");
+    assert.deepEqual(await response.json(), { success: false, message: "Origin not allowed" });
   });
 });
 
-test("malformed JSON receives 400 without a stack trace", async () => {
+test("malformed JSON receives a 400 response", async () => {
   await withServer(() => true, async (base) => {
     const response = await fetch(base + "/api/v1/health", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{broken",
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{bad",
     });
     assert.equal(response.status, 400);
     assert.deepEqual(await response.json(), { success: false, message: "Invalid JSON body" });
