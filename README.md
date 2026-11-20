@@ -15,7 +15,7 @@ Node.js 22+ · Express 5 · MongoDB Atlas. Simple modular monolith without Redis
 
 1. Install Node.js 22+, `npm install`; set up `.env` from `.env.example` (MongoDB URI, exact CORS origins, JWT secret and admin credentials). Rotate any exposed Atlas secrets.
 2. **Before switching an existing database to this release**, finish all active slot-based attempts and take a verified MongoDB backup. Legacy attempts without email are preserved for historical access.
-3. Run `npm run db:migrate` once with the production environment. It first creates the unique `{quiz:1,email:1}` partial index, then drops the obsolete roll/seat indexes. It **refuses** if any old attempt lacking email is currently active. The old `slots` collection is left in MongoDB, untouched.
+3. First run `npm run db:migrate:check` to inspect the actual target database. After confirming a verified backup, run `npm run db:migrate -- --expect-db=YOUR_DATABASE_NAME` with the production environment. It first creates the unique `{quiz:1,email:1}` partial index, then drops the obsolete roll/seat indexes. It **refuses** if any old attempt lacking email is currently active. The old `slots` collection is left in MongoDB, untouched.
 4. Deploy the new backend and compatible frontend together (the old frontend roll/slot API payload will be rejected). Start using `npm run dev` or `npm start`; verify `npm test` and `npm run db:check`.
 5. Configure a periodic one-shot `npm run attempts:finalize` to finalize expired unsent attempts from their last persisted drafts. No background worker is installed.
 
