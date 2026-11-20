@@ -1,63 +1,63 @@
 # Quiz Hub Backend
 
-Single Express.js app + MongoDB Atlas (Mongoose) modular monolith, using the Painting backend's simple controllers/models/routes/validations/utils architecture. No Redis, queues, microservices or new packages.
+Node.js 22 + Express 5 + MongoDB Atlas, simple modular monolith. One `src/app.js` entry point, Painting-style routes/controllers/models/validators/utils, and no Redis or new packages.
 
-**Current state:** Admin authentication, quiz management, slot scheduling, student attempt start/recovery, versioned autosave, final submission and trusted server-side scoring are implemented in stacked feature branches. **Admin result listing, pagination, CSV export, frontend migration, production scheduling and 250-student load testing are NOT implemented yet. Not ready for a live exam.**
+## Current modules
+
+- Single seeded admin authentication
+- Quiz/questions management
+- Six-slot scheduling
+- Student exam entry (name + numeric-only roll number), attempt session and refresh recovery
+- Versioned answer autosave and idempotent final submission
+- Trusted MCQ/True-False scoring, manual review for short-text/coding
+- **Admin results listing, database cursor pagination, filters, statistics and CSV export**
+
+**Not production ready:** The existing frontend still uses Firebase. Real Atlas integration tests, load tests with 250 concurrent students, production expiry scheduling, and deployment verification have not been completed. A successful GitHub Actions run is not evidence of a load-tested backend.
 
 ## Local setup
 
-1. Node.js 22+: `npm install` and commit generated `package-lock.json` before deployment.
-2. `Copy-Item .env.example .env` in PowerShell; set exact `CORS_ORIGINS`, `MONGODB_URI`, strong `JWT_SECRET` and admin credentials privately.
-3. Rotate any credentials previously exposed in chat; URL-encode MongoDB URI password special characters.
-4. `npm run db:check`, `npm run db:seed`, `npm run dev`, `npm test`.
+1. Install Node.js 22+ and run `npm install`. Commit the generated `package-lock.json` before deployment.
+2. Copy `.env.example` to `.env`, set `MONGODB_URI`, `CORS_ORIGINS`, random `JWT_SECRET` and private admin credentials.
+3. Rotate previously shared Atlas credentials. URL-encode special characters in URI passwords and allowlist only the necessary IP addresses.
+4. Run `npm run db:check`, `npm run db:seed`, `npm run dev`, `npm test`.
+5. Optional one-shot expiry cleanup: `npm run attempts:finalize` (not yet scheduled).
 
-## Student exam flow
+## Admin results
 
-- `GET /api/v1/student/quizzes` — available published quiz metadata.
-- `POST /api/v1/student/attempts/start` — name, numeric-only roll string and UUIDv4 `startKey`. No student login/signup.
-- `GET /api/v1/student/attempts/current` — safe questions and server-saved draft; never returns private answer keys.
-- `PUT /api/v1/student/attempts/draft` — complete answer snapshot and increasing version; safe retries and stale-write protection.
-- `POST /api/v1/student/attempts/submit` — save final answers and trusted grading in **one conditional MongoDB update**. Duplicate retries return the original receipt.
+Requires admin authentication cookie (and browser credentials).
 
-For submit/draft, send `{ "version": 1, "answers": [{ "questionId": "507f1f77bcf86cd799439011", "answer": "A", "timeSpent": 5, "timedOut": false }] }`; submit optionally accepts `"reason": "student"`. Use `credentials: "include"` in browser requests. Roll number must contain only ASCII digits; it remains a string to preserve leading zeros.
+`GET /api/v1/admin/results?quizId=<24-character MongoDB ID>&limit=25`
 
-## Scoring rules
-
-- MCQ and True/False: scored **only** against private MongoDB answer keys.
-- Short-text and coding answers: **manual review required** when answered. No browser-provided test results or points are trusted, and user JavaScript is never executed in this backend.
-- Unanswered manual questions are awarded zero without review.
-- Score starts as partial while `gradingStatus = "pending_review"`. Final score is complete only when `gradingStatus = "graded"`.
-- Grade fields (`score, maxScore, objectiveScore, pendingReviewCount, gradingStatus, manualGrades`) live on the same `Attempt` document; no extra result collection.
-- Students never receive admin scores in the submit receipt. Student result publication policy and UI are later-phase work.
-
-## Admin review APIs (admin JWT cookie required)
-
-- `GET /api/v1/admin/attempts/:id`: read an attempt's stored answers and grading state.
-- `PATCH /api/v1/admin/attempts/:id/grade`: manual grade one answered coding/short-text question.
-
-Example:
+Response:
 
 ```json
-{ "questionId": "507f1f77bcf86cd799439011", "pointsAwarded": 2 }
+{
+  "success": true,
+  "message": "Results fetched",
+  "data": {
+    "items": [],
+    "hasMore": false,
+    "nextCursor": null
+  }
+}
 ```
 
-Grades are validated against the question's maximum marks, recomputed server-side and protected against conflicting admin updates by `gradingVersion`. All admin state-changing requests require trusted `Origin`.
+For the next page, pass `cursor=<nextCursor>` with the same quiz and filters. `limit` defaults to 25, max 100. Ordering is **attempt creation order** (`_id` descending) so a new grade/submission cannot move records between pages. The list never fetches private answer arrays, question keys or internal session hashes.
 
-## Expired-attempt processing
+Optional filters: `slotId` (24-digit hexadecimal ObjectId), `status` (`started|submitted|terminated`), `gradingStatus` (`ungraded|pending_review|graded`), `rollNo` (exact 1–25 ASCII digits; leading zeros preserved). Filters operate in MongoDB, not locally on one page. Use a new pagination cursor when filters change.
 
-```sh
-npm run attempts:finalize
-```
+- `GET /api/v1/admin/results/stats?quizId=<id>` — counts **all attempts**, separating active, expired-but-not-finalized, submitted, terminated, graded and pending manual reviews. Optional `slotId`.
+- `GET /api/v1/admin/results/export?quizId=<id>` — CSV of **all filtered attempts** regardless of the current page. Supports `slotId`, `status`, `gradingStatus`, `rollNo`. Streaming cursor with batch size 100 limits application memory. CSV escapes quotes and protects user-entered cells from spreadsheet formulas.
+- `GET /api/v1/admin/attempts/:id` — full review of an individual attempt, including answers.
+- `PATCH /api/v1/admin/attempts/:id/grade` — manual grading of coding/short-text answers.
 
-This one-shot command finds expired-but-unsubmitted attempts, saves the **last successfully autosaved draft** (never late client answers) and grades them. It is idempotent and safe to rerun.
+The dashboard should load the results page and statistics independently; do not compute total counts from a page of 25 rows or fetch all 1,500 answers for listing. CSV is admin-only, with `Cache-Control: no-store`.
 
-On AWS EC2, schedule the command every minute using an OS cron job **after the deployment phase**. A scheduler is not configured yet. The script does not run automatically during local development.
+## Remaining release work
 
-## Limitations and release checklist
+1. Test real MongoDB transactions, unique indexes and failure/retry scenarios.
+2. Connect and migrate frontend from Firebase, including numeric-only roll validation, autosave and admin pages.
+3. Test 250 simultaneous starts, autosaves, final submits and result lookups.
+4. Confirm Atlas Free cluster and AWS limits/monitoring, schedule expiry finalization and backups.
 
-- Any name + numeric roll number is allowed; **roll number alone cannot verify identity**. First claimant controls that attempt.
-- The frontend still uses Firebase and accepts alphanumeric rolls. Frontend migration and numeric validation remain necessary.
-- Current tests mock database operations. **Actual Atlas transaction capacity, concurrent write consistency, 250-user load and browser recovery still require staging verification**.
-- Untrusted code execution, automatic coding grading, and real-time anti-cheating detection are intentionally not implemented.
-- Admin pagination/search/CSV and optional result publishing are next phases.
-- MongoDB Atlas Free limits may require reduced autosave frequency and batch testing under the 250-student peak load.
+Roll number alone **cannot verify identity**; open enrollment allows a first claimant to impersonate another roll number. If stronger identity protection is required, use an individual exam code or supervised verification.
