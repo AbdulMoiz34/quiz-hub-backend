@@ -16,10 +16,26 @@ Node.js 22+ · Express 5 · MongoDB Atlas. Simple modular monolith without Redis
 1. Install Node.js 22+, `npm install`; set up `.env` from `.env.example` (MongoDB URI, exact CORS origins, JWT secret and admin credentials). Rotate any exposed Atlas secrets.
 2. **Before switching an existing database to this release**, finish all active slot-based attempts and take a verified MongoDB backup. Legacy attempts without email are preserved for historical access.
 3. First run `npm run db:migrate:check` to inspect the actual target database. After confirming a verified backup, run `npm run db:migrate -- --expect-db=YOUR_DATABASE_NAME` with the production environment. It first creates the unique `{quiz:1,email:1}` partial index, then drops the obsolete roll/seat indexes. It **refuses** if any old attempt lacking email is currently active. The old `slots` collection is left in MongoDB, untouched.
-4. Deploy the new backend and compatible frontend together (the old frontend roll/slot API payload will be rejected). Start using `npm run dev` or `npm start`; verify `npm test` and `npm run db:check`.
+4. Deploy the new backend and compatible frontend together (the old frontend roll/slot API payload will be rejected). The only startup entry point is `src/server.js`: use `npm run dev` or `npm start`. Verify `npm test` and `npm run db:check`.
 5. Configure a periodic one-shot `npm run attempts:finalize` to finalize expired unsent attempts from their last persisted drafts. No background worker is installed.
 
 Do not deploy the new attempt API while the old `quiz_1_rollNo_1` unique index still exists: new email-only inserts can collide against that obsolete index.
+
+## Run on EC2 with PM2 (no CI/CD)
+
+After configuring `.env`, connecting Atlas, and verifying any required index migration:
+
+```bash
+npm install --omit=dev
+npm run db:check
+pm2 start src/server.js --name quiz-hub-api --time
+pm2 logs quiz-hub-api --lines 30
+curl -i http://127.0.0.1:5000/api/v1/ready
+```
+
+Run `pm2 startup`, execute the command it prints, and run `pm2 save` to restore the service after reboot. Keep `HOST=127.0.0.1` and proxy through Nginx (ports 80/443); do not expose port 5000 publicly.
+
+Older deployments using `pm2 start src/app.js` **must delete that PM2 process** and start `src/server.js` instead. `src/app.js` only defines the Express app so tests can import it without starting a server.
 
 ## Student API
 
