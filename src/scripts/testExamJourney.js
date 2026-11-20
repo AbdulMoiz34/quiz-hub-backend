@@ -172,7 +172,7 @@ async function runStudent(i, questionId) {
   const startKey = randomUUID();
   const startBody = {
     quizId: String(quiz._id), studentName: "Load Student " + (i + 1),
-    email, phone: "+923001234567", startKey,
+    email, phone: "03001234567", startKey,
   };
   // Keep failure context per student without leaking request credentials.
   let step = "start";
@@ -351,7 +351,7 @@ async function run() {
   // A late submit must use only previously persisted answers.
   const expired = await Attempt.create({
     quiz: quiz._id, studentName: "Expired Test",
-    email: "expired-" + id + "@example.test", phone: "+923001234567",
+    email: "expired-" + id + "@example.test", phone: "03001234567",
     startKeyHash: randomBytes(32).toString("hex"),
     startedAt: new Date(Date.now() - 3600_000),
     expiresAt: new Date(Date.now() - 120_000),

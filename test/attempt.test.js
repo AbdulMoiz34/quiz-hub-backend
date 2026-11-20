@@ -17,7 +17,7 @@ const attemptId = new mongoose.Types.ObjectId();
 const startKey = randomUUID();
 const candidate = {
   quizId, studentName: "Ahmed Ali", email: "Ahmed@Example.test",
-  phone: "+923001234567", startKey,
+  phone: "03001234567", startKey,
 };
 
 async function withServer(callback) {
@@ -39,7 +39,10 @@ test("email is normalized and phone/name are required", () => {
   const { error, value } = startAttemptSchema.validate(candidate);
   assert.equal(error, undefined);
   assert.equal(value.email, "ahmed@example.test");
-  for (const patch of [{ email: "bad" }, { phone: "" }, { studentName: "" },
+  for (const patch of [{ email: "bad" }, { phone: "" },
+    { phone: "0311111122" }, { phone: "031111112222" },
+    { phone: "04111111222" }, { phone: "+923111111222" },
+    { phone: "0311111122a" }, { studentName: "" },
     { startKey: "not-uuid" }, { rollNo: "123" }]) {
     assert.ok(startAttemptSchema.validate({ ...candidate, ...patch }).error);
   }
@@ -59,6 +62,11 @@ test("invalid registration rejected before database access", async () => {
   await withServer(async (base) => {
     const response = await post(base, { ...candidate, email: "invalid" });
     assert.equal(response.status, 400);
+    const wrongPhone = await post(base, { ...candidate, phone: "0311111122" });
+    assert.equal(wrongPhone.status, 400);
+    assert.match((await wrongPhone.json()).message, /11 digits/);
+    const international = await post(base, { ...candidate, phone: "+923111111222" });
+    assert.equal(international.status, 400);
   });
 });
 
@@ -81,7 +89,7 @@ test("start is idempotent but a second key for same email receives 409", async (
       assert.equal(first.status, 200);
       const firstBody = (await first.json()).data;
       assert.equal(firstBody.email, "ahmed@example.test");
-      assert.equal(firstBody.phone, "+923001234567");
+      assert.equal(firstBody.phone, "03001234567");
       assert.equal(Date.parse(firstBody.expiresAt) - Date.parse(firstBody.startedAt), 60 * 60_000);
       assert.match(first.headers.get("set-cookie"), /HttpOnly/);
       assert.equal(writes, 1);
@@ -106,7 +114,7 @@ test("server handles an atomic insert collision by returning its winner", async 
   let calls = 0;
   const winner = {
     _id: attemptId, quiz: quizId, email: "ahmed@example.test",
-    studentName: "Ahmed Ali", phone: "+923001234567",
+    studentName: "Ahmed Ali", phone: "03001234567",
     startKeyHash: createHash("sha256").update(startKey).digest("hex"),
     startedAt: new Date(), expiresAt: new Date(Date.now() + 3600_000), status: "started",
   };
@@ -157,7 +165,7 @@ test("expired attempt doesn't reveal questions", async () => {
   Attempt.findById = () => ({
     lean: async () => ({
       _id: attemptId, quiz: new mongoose.Types.ObjectId(quizId),
-      email: "ahmed@example.test", studentName: "Ahmed Ali", phone: "+923001234567",
+      email: "ahmed@example.test", studentName: "Ahmed Ali", phone: "03001234567",
       status: "started", startedAt: new Date(Date.now() - 3600_000),
       expiresAt: new Date(Date.now() - 1000),
     }),

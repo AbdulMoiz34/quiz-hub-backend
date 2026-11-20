@@ -24,7 +24,7 @@ const rows = Array.from({ length: 1505 }, (_, i) => ({
   _id: new mongoose.Types.ObjectId((i + 1).toString(16).padStart(24, "0")),
   quiz: quiz,
   email: "student" + String(i + 1).padStart(5, "0") + "@example.test",
-  phone: "+923001234567",
+  phone: "03001234567",
   violationCount: 0,
   studentName: i === 0 ? '=HYPERLINK("http://example.com")' : "Student " + (i + 1),
   status: i % 8 === 0 ? "started" : "submitted",

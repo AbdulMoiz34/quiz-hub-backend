@@ -55,7 +55,7 @@ async function createAttempt({ version = 0, savedAnswer = "", expired = false } 
     quiz: quiz._id,
     studentName: "Race Test Student " + number,
     email: "race-" + String(quiz._id) + "-" + number + "@example.test",
-    phone: "+923001234567",
+    phone: "03001234567",
     startKeyHash: createHash("sha256").update(randomUUID()).digest("hex"),
     startedAt: new Date(Date.now() - 120_000),
     expiresAt: new Date(Date.now() + (expired ? -10_000 : 10 * 60_000)),
