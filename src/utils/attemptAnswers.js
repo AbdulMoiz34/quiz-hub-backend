@@ -23,14 +23,12 @@ export function countAnswered(answers = []) {
 }
 
 // Mongoose subdocuments and Joi data may have different prototypes.
-// Compare just the four persisted answer fields for safe duplicate retries.
+// Compare only persisted fields for safe duplicate retries.
 export function sameAnswers(saved = [], incoming = []) {
   if (saved.length !== incoming.length) return false;
   return saved.every((item, index) => {
     const other = incoming[index];
     return String(item.questionId) === other.questionId &&
-      item.answer === other.answer &&
-      item.timeSpent === other.timeSpent &&
-      item.timedOut === other.timedOut;
+      item.answer === other.answer;
   });
 }
