@@ -13,7 +13,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      # This initial bootstrap has no lockfile. Run npm install and commit package-lock.json.
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Syntax checks
@@ -22,3 +21,35 @@ jobs:
         run: npm test
       - name: Local transport-only smoke (no database)
         run: node src/scripts/testExamJourney.js --users=5 --transport-only
+
+  integration:
+    name: Real MongoDB student/admin journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # Fresh, local and disposable MongoDB database; no production credentials.
+      TEST_MONGODB_URI: mongodb://127.0.0.1:27017/quiz_hub_test
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Check basic HTTP + MongoDB journey
+        run: npm run test:db
+      - name: Check concurrent drafts, submissions, expiry and restart
+        run: npm run test:races
+      - name: Check full admin/student lifecycle, violations, grading and reattempt
+        run: npm run test:journey

@@ -46,7 +46,8 @@ export const reportViolation = async (req, res) => {
         submitReason: { $cond: [limitReached, "violation_limit", "$$REMOVE"] },
       },
     }],
-    { returnDocument: "after" }
+    // Mongoose 9 rejects aggregation update arrays unless explicitly enabled.
+    { returnDocument: "after", updatePipeline: true }
   ).select("status violationCount violations");
 
   if (updated) {
