@@ -120,7 +120,7 @@ export const currentAttempt = async (req, res) => {
   if (attempt.status !== "started") {
     res.set("Cache-Control", "no-store");
     return successResponse(res, 200, "Exam attempt is not active", {
-      attempt, quiz: null, questions: [],
+      attempt, quiz: null, questions: [], serverNow: new Date().toISOString(),
     });
   }
 
@@ -133,6 +133,7 @@ export const currentAttempt = async (req, res) => {
   // No correctAnswer, no coding test cases, no hidden admin data.
   res.set("Cache-Control", "no-store");
   return successResponse(res, 200, "Current exam loaded", {
+    serverNow: new Date().toISOString(),
     attempt,
     quiz: {
       id: String(quiz._id),

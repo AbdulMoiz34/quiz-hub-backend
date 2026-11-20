@@ -183,6 +183,7 @@ test("draft saves versioned answers, identical retry is safe, stale writes rejec
       assert.equal(current.status, 200);
       const data = (await current.json()).data;
       assert.equal(data.draft.version, 2);
+      assert.ok(Number.isFinite(Date.parse(data.serverNow)), "Server time required for stable deadline");
       assert.equal(data.draft.answers[0].answer, "A");
       assert.ok(!("correctAnswer" in data.questions[0]));
     });
