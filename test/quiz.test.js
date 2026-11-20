@@ -20,6 +20,8 @@ test("accepts a valid MCQ with server-side answer key", () => {
   assert.equal(error, undefined);
   assert.equal(value.questions[0].correctAnswer, "HyperText Markup Language");
   assert.equal(value.maxViolations, 3);
+  assert.equal(value.questions[0].timeSeconds, undefined);
+  assert.equal(value.questionTimeSeconds, undefined);
 });
 
 test("rejects MCQ without valid answer key", () => {
