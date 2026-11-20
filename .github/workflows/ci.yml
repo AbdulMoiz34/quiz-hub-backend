@@ -53,3 +53,9 @@ jobs:
         run: npm run test:races
       - name: Check full admin/student lifecycle, violations, grading and reattempt
         run: npm run test:journey
+      - name: Check 200 simultaneous student journeys
+        run: node src/scripts/testExamJourney.js --users=200
+      - name: Check 250 simultaneous student journeys
+        run: node src/scripts/testExamJourney.js --users=250
+      - name: Check 300 simultaneous student journeys
+        run: node src/scripts/testExamJourney.js --users=300
