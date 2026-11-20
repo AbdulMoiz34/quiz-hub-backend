@@ -207,7 +207,50 @@ A finding in this table describes **what actually exists**, not a reason to rewr
 | Timers/violations | **Incomplete if advertised as enforced** | Only global expiry is enforced; per-question/strikes are metadata. |
 | Results and CSV | **Implemented; real data-scale unverified** | Keyset pagination, query filters, aggregate stats, CSV stream; 1,505-row test is mocked. |
 | Security/privacy | **Reasonable baseline; open-entry abuse risk** | No direct answer-key leak found, admin/attempt auth separate, but numeric roll does not verify identity. |
-| 200–300 concurrent users | **NOT VERIFIED** | No independently observed post-fix 200/250/300 real-DB pass; runner currently capped at 250. |
+| 200–300 concurrent users | **FAILED: 250-client test** | User-provided real Atlas run completed 232/250 journeys, with 18 generic transport errors; 300 not tested. |
 | Deployment/recovery | **NOT VERIFIED** | No production cron, frontend cutover, backup restore, Atlas outage or production HTTPS tests. |
 
 **Decision: NO-GO for a live 200–300-student exam until P0 gates are evidenced and any required exam-policy enforcement is resolved.** The principal recommendation is **test and make a few localized fixes**, not rewrite. Where implementation is already correct and maintainable: **No change recommended.**
+
+## 13. Post-audit evidence update: real 250-client test (20 November 2026)
+
+**Provenance:** User-provided PowerShell output from `npm run test:load` on a
+dedicated `quiz_hub_test` database after the unique-seat code. This result
+was not produced by the auditor and cannot be reproduced here without private
+Atlas access. It supersedes this report's earlier **unverified** status for
+the 250-user run; the real test **failed**.
+
+| Metric | Observed |
+|---|---:|
+| Requested student journeys | 250 |
+| Successful complete journeys | 232 (92.8%) |
+| Failed journeys | 18 (7.2%) |
+| Failure text | `fetch failed` (all first eight samples identical) |
+| Persisted Attempt documents | 232 |
+| Persisted submitted attempts | 232 |
+| Persisted slot admissions | 232 |
+| Total test time | 40,781 ms |
+| Successful start p95 latency | 31,592 ms |
+| Successful current p95 | 4,767 ms |
+| Successful draft p95 | 6,888 ms |
+| Successful submit p95 | 6,806 ms |
+
+**What this proves:** The 232 journeys recorded as successful had matching
+attempt, submission and admission counts; no unmatched Attempt documents are
+visible in these aggregate counts. The application did **not** complete the
+required 250 journeys. The successful-request start p95 was high.
+
+**What this does not prove:** `fetch failed` is a generic Node.js client
+exception, not a MongoDB error code. The original test client discarded
+`error.cause` and the failing HTTP stage. Therefore, client connection
+timeout/socket reset, HTTP server resource pressure and DB-driven queueing
+cannot yet be separated. No claim of data corruption, repeated roll numbers
+or a confirmed root cause is supported by this output. A 300-user run remains
+unverified.
+
+**Follow-up:** Separate diagnostic-only [PR #14](https://github.com/AbdulMoiz34/quiz-hub-backend/pull/14)
+adds safe failure `step`, `causeCode`, `httpStatus` and latency output,
+plus an optional ramp comparison. CI runs mocks and syntax checks; its success
+does not replace the real-Atlas retest. Do not change connection pools,
+HTTP timeouts, seat allocation or dependencies before measuring the failure
+category. **Production verdict remains NO-GO.**
