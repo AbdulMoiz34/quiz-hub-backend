@@ -129,37 +129,37 @@ async function runStudent(i, questionId) {
   // Keep failure context per student without leaking request credentials.
   let step = "start";
   try {
-  const start = await http("/api/v1/student/attempts/start", {
-    method: "POST", body: startBody,
-  });
-  expectOk(start, "start " + rollNo);
-  const cookie = start.headers.get("set-cookie")?.split(";")[0];
-  assert.ok(cookie?.startsWith("quiz_hub_attempt="));
-
-  step = "current";
-  const current = await http("/api/v1/student/attempts/current", { cookie });
-  expectOk(current, "resume " + rollNo);
-  assert.equal(current.data.data.questions.length, 1);
-  assert.ok(!("correctAnswer" in current.data.data.questions[0]));
-
-  const answers = [{ questionId, answer: "B", timeSpent: 5, timedOut: false }];
-  step = "draft";
-  const draft = await http("/api/v1/student/attempts/draft", {
-    method: "PUT", cookie, body: { version: 1, answers },
-  });
-  expectOk(draft, "autosave " + rollNo);
-
-  step = "submit";
-  const submit = await http("/api/v1/student/attempts/submit", {
-    method: "POST", cookie, body: { version: 2, answers, reason: "student" },
-  });
-  expectOk(submit, "submit " + rollNo);
-  assert.equal(submit.data.data.status, "submitted");
-
-  return {
-    rollNo, startKey, startBody, cookie, attemptId: start.data.data.id,
-    timings: { start: start.ms, current: current.ms, draft: draft.ms, submit: submit.ms },
-  };
+    const start = await http("/api/v1/student/attempts/start", {
+      method: "POST", body: startBody,
+    });
+    expectOk(start, "start " + rollNo);
+    const cookie = start.headers.get("set-cookie")?.split(";")[0];
+    assert.ok(cookie?.startsWith("quiz_hub_attempt="));
+  
+    step = "current";
+    const current = await http("/api/v1/student/attempts/current", { cookie });
+    expectOk(current, "resume " + rollNo);
+    assert.equal(current.data.data.questions.length, 1);
+    assert.ok(!("correctAnswer" in current.data.data.questions[0]));
+  
+    const answers = [{ questionId, answer: "B", timeSpent: 5, timedOut: false }];
+    step = "draft";
+    const draft = await http("/api/v1/student/attempts/draft", {
+      method: "PUT", cookie, body: { version: 1, answers },
+    });
+    expectOk(draft, "autosave " + rollNo);
+  
+    step = "submit";
+    const submit = await http("/api/v1/student/attempts/submit", {
+      method: "POST", cookie, body: { version: 2, answers, reason: "student" },
+    });
+    expectOk(submit, "submit " + rollNo);
+    assert.equal(submit.data.data.status, "submitted");
+  
+    return {
+      rollNo, startKey, startBody, cookie, attemptId: start.data.data.id,
+      timings: { start: start.ms, current: current.ms, draft: draft.ms, submit: submit.ms },
+    };
   } catch (error) {
     error.student = i + 1;
     error.step ||= step;
