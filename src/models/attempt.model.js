@@ -37,6 +37,9 @@ const attemptSchema = new mongoose.Schema({
 
 attemptSchema.index({ quiz: 1, rollNo: 1 }, { unique: true });
 attemptSchema.index({ slot: 1, status: 1 });
+// Admin results pagination reads a small page in immutable creation order.
+attemptSchema.index({ quiz: 1, _id: -1 });
+attemptSchema.index({ quiz: 1, slot: 1, _id: -1 });
 attemptSchema.index({ status: 1, expiresAt: 1 });
 
 export const Attempt = mongoose.model("Attempt", attemptSchema);
