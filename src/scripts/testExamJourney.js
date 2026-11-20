@@ -177,7 +177,8 @@ async function run() {
     .map((r) => String(r.reason?.message || r.reason));
   const attemptCount = await Attempt.countDocuments({ quiz: quiz._id });
   const submittedCount = await Attempt.countDocuments({ quiz: quiz._id, status: "submitted" });
-  const admittedCount = (await Slot.findById(slot._id)).admittedCount;
+  const admittedCount = await Attempt.countDocuments({ slot: slot._id });
+  const reservedSeats = await Attempt.distinct("seatNumber", { slot: slot._id });
 
   console.info(JSON.stringify({
     requestedStudents: userCount,
@@ -198,7 +199,10 @@ async function run() {
   assert.equal(failed.length, 0, "Not all simulated students completed successfully");
   assert.equal(attemptCount, userCount, "Missing/duplicate attempts");
   assert.equal(submittedCount, userCount, "Missing submissions");
-  assert.equal(admittedCount, userCount, "Incorrect slot admission count");
+  assert.equal(admittedCount, userCount, "Incorrect occupied seat count");
+  assert.equal(reservedSeats.length, userCount, "Two students were assigned the same seat");
+  assert.ok(reservedSeats.every((seat) => Number.isInteger(seat) &&
+    seat >= 1 && seat <= userCount), "Seat number outside slot capacity");
 
   const first = good[0];
   const sameKey = await http("/api/v1/student/attempts/start", {
@@ -211,6 +215,13 @@ async function run() {
     method: "POST", body: { ...first.startBody, startKey: randomUUID() },
   });
   assert.equal(differentKey.status, 409, "Duplicated roll number must be rejected");
+
+  // The slot has exactly userCount seats: a new roll must receive 409.
+  const beyondCapacity = await http("/api/v1/student/attempts/start", {
+    method: "POST",
+    body: { ...first.startBody, rollNo: "999998", startKey: randomUUID() },
+  });
+  assert.equal(beyondCapacity.status, 409, "Full slot must reject new students");
 
   const repeatedSubmit = await http("/api/v1/student/attempts/submit", {
     method: "POST", cookie: first.cookie,

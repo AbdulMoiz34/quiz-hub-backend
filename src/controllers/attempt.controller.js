@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import mongoose from "mongoose";
 import { Quiz } from "../models/quiz.model.js";
 import { Slot } from "../models/slot.model.js";
 import { Attempt } from "../models/attempt.model.js";
@@ -28,18 +27,13 @@ function issueSession(res, config, attempt) {
   return successResponse(res, 200, "Exam attempt ready", publicAttempt(attempt));
 }
 
-function httpError(statusCode, message) {
-  const error = new Error(message);
-  error.statusCode = statusCode;
-  return error;
-}
-
+// A random starting seat distributes simultaneous candidates across the
+// available seats. A unique database index guarantees no seat is assigned twice.
+// No shared Slot document update or multi-document transaction is needed.
 export const startAttempt = (config) => async (req, res) => {
   const { quizId, studentName, rollNo, startKey } = req.body;
   const startKeyHash = createHash("sha256").update(startKey).digest("hex");
 
-  // Same request may be retried after a network failure. Only the browser that
-  // generated the same secret startKey can recover this existing attempt.
   const existing = await Attempt.findOne({ quiz: quizId, rollNo })
     .select("+startKeyHash");
   if (existing) {
@@ -61,51 +55,64 @@ export const startAttempt = (config) => async (req, res) => {
 
   if (!slot) return errorResponse(res, 409, "No active exam slot is available");
 
-  const expiresAt = new Date(Math.min(
-    slot.endsAt.getTime(),
-    now.getTime() + quiz.durationMinutes * 60_000
-  ));
+  // Fail closed if this slot already contains attempts from the old counter
+  // implementation. Those attempts lack seatNumber and must be migrated first.
+  if (await Attempt.exists({ slot: slot._id, seatNumber: { $exists: false } })) {
+    return errorResponse(res, 409, "This slot has legacy attempts; contact admin");
+  }
 
-  let attempt;
-  try {
-    // The slot capacity reservation and attempt creation commit together.
-    // A unique {quiz, rollNo} index prevents simultaneous duplicate starts.
-    attempt = await mongoose.connection.transaction(async (session) => {
-      const admitted = await Slot.findOneAndUpdate(
-        {
-          _id: slot._id, quiz: quizId, isActive: true,
-          startsAt: { $lte: new Date() }, endsAt: { $gt: new Date() },
-          $expr: { $lt: [{ $ifNull: ["$admittedCount", 0] }, "$capacity"] },
-        },
-        { $inc: { admittedCount: 1 } },
-        { session, new: true }
-      );
-      if (!admitted) throw httpError(409, "Exam slot is full or closed");
+  // Hash-based starting position minimizes simultaneous seat collisions.
+  // Linear probing eventually checks all seats, so no free seat is skipped.
+  const firstSeat = Number.parseInt(startKeyHash.slice(0, 8), 16) % slot.capacity;
 
-      const [created] = await Attempt.create([{
+  for (let offset = 0; offset < slot.capacity; offset += 1) {
+    if (Date.now() >= slot.endsAt.getTime()) {
+      return errorResponse(res, 409, "Exam slot has closed");
+    }
+
+    const seatNumber = ((firstSeat + offset) % slot.capacity) + 1;
+    const startedAt = new Date();
+    const expiresAt = new Date(Math.min(
+      slot.endsAt.getTime(),
+      startedAt.getTime() + quiz.durationMinutes * 60_000
+    ));
+    try {
+      // Single-document insert is atomic. Unique indexes on {quiz,rollNo}
+      // and {slot,seatNumber} enforce both constraints during concurrency.
+      const attempt = await Attempt.create({
         quiz: quizId,
         slot: slot._id,
+        seatNumber,
         studentName,
         rollNo,
         startKeyHash,
-        startedAt: now,
+        startedAt,
         expiresAt,
-      }], { session });
-      return created;
-    });
-  } catch (error) {
-    // A concurrent request may have won the unique index first. Allow retry
-    // only if its saved startKey matches this browser's startKey.
-    if (error.code === 11000) {
+      });
+      return issueSession(res, config, attempt);
+    } catch (error) {
+      if (error.code !== 11000) throw error;
+
+      // A seat collision is expected when many students start together;
+      // try the next seat, without modifying the shared Slot document.
+      if (error.keyPattern?.seatNumber) continue;
+
+      // The roll-number unique index may have been claimed concurrently.
       const winner = await Attempt.findOne({ quiz: quizId, rollNo })
         .select("+startKeyHash");
-      if (winner?.startKeyHash === startKeyHash) return issueSession(res, config, winner);
-      return errorResponse(res, 409, "This roll number has already started this quiz");
+      if (winner) {
+        if (winner.startKeyHash === startKeyHash) {
+          return issueSession(res, config, winner);
+        }
+        return errorResponse(res, 409, "This roll number has already started this quiz");
+      }
+
+      // If the duplicate came from the seat index but keyPattern was absent,
+      // try the next candidate instead.
     }
-    throw error;
   }
 
-  return issueSession(res, config, attempt);
+  return errorResponse(res, 409, "Exam slot is full");
 };
 
 export const currentAttempt = async (req, res) => {

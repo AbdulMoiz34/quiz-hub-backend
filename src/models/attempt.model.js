@@ -10,6 +10,7 @@ const answerSchema = new mongoose.Schema({
 const attemptSchema = new mongoose.Schema({
   quiz: { type: mongoose.Schema.Types.ObjectId, ref: "Quiz", required: true },
   slot: { type: mongoose.Schema.Types.ObjectId, ref: "Slot", required: true },
+  seatNumber: { type: Number, min: 1 },
   studentName: { type: String, required: true, trim: true },
   rollNo: { type: String, required: true, match: /^[0-9]{1,25}$/ },
   startKeyHash: { type: String, required: true, select: false },
@@ -36,6 +37,11 @@ const attemptSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 attemptSchema.index({ quiz: 1, rollNo: 1 }, { unique: true });
+// Legacy attempts without seatNumber are excluded until explicitly migrated.
+attemptSchema.index({ slot: 1, seatNumber: 1 }, {
+  unique: true,
+  partialFilterExpression: { seatNumber: { $type: "number" } },
+});
 attemptSchema.index({ slot: 1, status: 1 });
 // Admin results pagination reads a small page in immutable creation order.
 attemptSchema.index({ quiz: 1, _id: -1 });

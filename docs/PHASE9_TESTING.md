@@ -69,3 +69,29 @@ A pass requires 250 successful complete journeys, exactly 250 corresponding atte
 - [ ] AWS EC2 HTTPS, cookies, CORS, firewall, backups and monitoring verified
 
 **Stop-ship:** A failed admission/submit, duplicate roll acceptance, lost saved answer, stale final score, exposed answer key or unconfirmed production MongoDB capacity blocks live launch.
+
+
+## WriteConflict root cause and regression check
+
+Earlier versions reserved a seat by incrementing a shared
+`Slot.admittedCount` document *inside each student's transaction*.
+At 250 concurrent starts this caused MongoDB
+`WriteConflict` / `TransientTransactionError` (code 112).
+Adding retries to the same contended transaction does not remove the
+shared-document hotspot.
+
+The corrected implementation assigns a unique `Attempt.seatNumber`
+using the MongoDB unique index `{ slot: 1, seatNumber: 1 }`.
+Students do not update the same Slot document. The load script
+now checks all reserved seat numbers are distinct, within capacity,
+and that the 251st new student gets HTTP 409.
+
+If a previous live slot contains old attempts without seat numbers,
+new admissions are deliberately blocked until those records are migrated.
+For load tests, each run creates a new independent quiz and slot inside
+`quiz_hub_test`, and attempts cleanup afterward.
+
+**Please record:** `requestedStudents`, `successfulJourneys`,
+`failures`, `databaseAttempts`, `databaseSubmissions`,
+`slotAdmissions`, and p95 latencies. If any step fails, do not
+proceed to an actual examination.

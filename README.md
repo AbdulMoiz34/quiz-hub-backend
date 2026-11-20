@@ -65,3 +65,29 @@ Roll number alone **cannot verify identity**; open enrollment allows a first cla
 ## Real MongoDB integration and load tests
 
 See [Phase 9 reliability checks](docs/PHASE9_TESTING.md). These tests require a separate `TEST_MONGODB_URI` and are intentionally **not run in GitHub Actions** without access to a dedicated test database. `npm run test:db` exercises five clients; `npm run test:load` sends 250 simultaneous student journeys. No test writes are allowed to the normal `quiz_hub` database.
+
+
+## Concurrent slot admissions (WriteConflict fix)
+
+Admissions no longer increment a single `Slot.admittedCount` inside a
+multi-document transaction. Each new `Attempt` contains a `seatNumber` (1 to
+the slot's capacity), and a unique MongoDB `{ slot, seatNumber }` index ensures
+no two students get the same seat. The existing unique `{ quiz, rollNo }` index
+still ensures only one attempt per roll per quiz.
+
+When 250 students start simultaneously, they each insert their own Attempt
+document; expected seat collisions (MongoDB E11000) retry another seat. They
+no longer write a shared Slot document, avoiding transaction WriteConflict
+hotspots. The exact limit is enforced by the unique seat index; no in-memory
+counter, queue or Redis is used.
+
+**Upgrade note:** Existing attempts created by the old admission implementation
+do not have `seatNumber`. The start endpoint intentionally rejects new
+admissions to a slot containing such legacy attempts so capacity cannot be
+silently exceeded. Use a **new slot** for new exams, or plan an explicit data
+migration for existing active slots before deploying this fix. Never delete
+real student attempts to bypass the guard.
+
+After merging the fix, rerun `npm run test:db` and `npm run test:load`
+against your private `quiz_hub_test` connection. GitHub CI does not run a
+real MongoDB stress test.

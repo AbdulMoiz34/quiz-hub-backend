@@ -112,31 +112,36 @@ test("safe question delivery does not expose correct answers or coding tests", (
   }
 });
 
-test("start creates one admission; network retry with same key resumes, another key is rejected", async () => {
-  const originals = {
-    findOneAttempt: Attempt.findOne,
-    findOneQuiz: Quiz.findOne,
-    findOneSlot: Slot.findOne,
-    reserveSlot: Slot.findOneAndUpdate,
-    createAttempt: Attempt.create,
-    transaction: mongoose.connection.transaction,
+test("start reserves a unique seat; retries are idempotent and do not consume seats", async () => {
+  const original = {
+    attemptFind: Attempt.findOne,
+    attemptExists: Attempt.exists,
+    quizFind: Quiz.findOne,
+    slotFind: Slot.findOne,
+    create: Attempt.create,
   };
-  const now = new Date();
-  const expires = new Date(now.getTime() + 40 * 60_000);
+  const expires = new Date(Date.now() + 40 * 60_000);
   let saved = null;
-  let admissions = 0;
+  const seats = [];
+  let collisions = 0;
 
   Attempt.findOne = () => ({ select: async () => saved });
+  Attempt.exists = async () => null;
   Quiz.findOne = () => ({ select: async () => ({ _id: quizId, durationMinutes: 30 }) });
   Slot.findOne = () => ({
     select: () => ({ lean: async () => ({ _id: slotId, endsAt: expires, capacity: 250 }) }),
   });
-  Slot.findOneAndUpdate = async () => { admissions += 1; return { _id: slotId }; };
-  Attempt.create = async ([doc]) => {
+  Attempt.create = async (doc) => {
+    if (!collisions++) {
+      const err = new Error("Seat already occupied");
+      err.code = 11000;
+      err.keyPattern = { slot: 1, seatNumber: 1 };
+      throw err;
+    }
+    seats.push(doc.seatNumber);
     saved = { _id: attemptId, ...doc, status: "started" };
-    return [saved];
+    return saved;
   };
-  mongoose.connection.transaction = async (fn) => fn({});
 
   try {
     await withServer(async (base) => {
@@ -144,26 +149,77 @@ test("start creates one admission; network retry with same key resumes, another 
       assert.equal(first.status, 200);
       assert.equal((await first.json()).data.rollNo, "00123");
       assert.match(first.headers.get("set-cookie"), /HttpOnly/);
-      assert.equal(admissions, 1);
+      assert.equal(seats.length, 1);
+      assert.ok(seats[0] >= 1 && seats[0] <= 250);
 
       const retry = await post(base, candidate);
       assert.equal(retry.status, 200);
       assert.equal((await retry.json()).data.id, String(attemptId));
-      assert.equal(admissions, 1, "Retry must not consume another seat");
+      assert.equal(seats.length, 1, "Retry must not create a second seat");
 
       const other = await post(base, { ...candidate, startKey: randomUUID() });
       assert.equal(other.status, 409);
-      assert.equal(admissions, 1);
+      assert.equal(seats.length, 1);
       assert.equal(saved.startKeyHash, createHash("sha256").update(startKey).digest("hex"));
     });
   } finally {
-    Attempt.findOne = originals.findOneAttempt;
-    Quiz.findOne = originals.findOneQuiz;
-    Slot.findOne = originals.findOneSlot;
-    Slot.findOneAndUpdate = originals.reserveSlot;
-    Attempt.create = originals.createAttempt;
-    mongoose.connection.transaction = originals.transaction;
+    Attempt.findOne = original.attemptFind;
+    Attempt.exists = original.attemptExists;
+    Quiz.findOne = original.quizFind;
+    Slot.findOne = original.slotFind;
+    Attempt.create = original.create;
   }
+});
+
+test("all occupied seats return 409 without overbooking", async () => {
+  const original = {
+    attemptFind: Attempt.findOne,
+    attemptExists: Attempt.exists,
+    quizFind: Quiz.findOne,
+    slotFind: Slot.findOne,
+    create: Attempt.create,
+  };
+  let attemptedSeats = 0;
+  Attempt.findOne = () => ({ select: async () => null });
+  Attempt.exists = async () => null;
+  Quiz.findOne = () => ({ select: async () => ({ durationMinutes: 30 }) });
+  Slot.findOne = () => ({
+    select: () => ({ lean: async () => ({
+      _id: slotId, endsAt: new Date(Date.now() + 60_000), capacity: 3,
+    }) }),
+  });
+  Attempt.create = async () => {
+    attemptedSeats += 1;
+    const err = new Error("Seat already occupied");
+    err.code = 11000;
+    err.keyPattern = { slot: 1, seatNumber: 1 };
+    throw err;
+  };
+
+  try {
+    await withServer(async (base) => {
+      const response = await post(base, candidate);
+      assert.equal(response.status, 409);
+      assert.equal((await response.json()).message, "Exam slot is full");
+      assert.equal(attemptedSeats, 3);
+    });
+  } finally {
+    Attempt.findOne = original.attemptFind;
+    Attempt.exists = original.attemptExists;
+    Quiz.findOne = original.quizFind;
+    Slot.findOne = original.slotFind;
+    Attempt.create = original.create;
+  }
+});
+
+test("a unique slot-seat index prevents concurrent overbooking", () => {
+  const seatIndex = Attempt.schema.indexes().find(([fields]) =>
+    fields.slot === 1 && fields.seatNumber === 1);
+  assert.ok(seatIndex, "Missing slot+seatNumber index");
+  assert.equal(seatIndex[1].unique, true);
+  assert.deepEqual(seatIndex[1].partialFilterExpression, {
+    seatNumber: { $type: "number" },
+  });
 });
 
 test("expired attempts cannot fetch questions even with a valid cookie", async () => {
