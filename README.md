@@ -1,66 +1,63 @@
 # Quiz Hub Backend
 
-Express.js + MongoDB Atlas examination API. **Single `src/app.js` entry point**, following the simple layering in the Rakhshinda Art backend.
+Single Express.js app + MongoDB Atlas (Mongoose) modular monolith, using the Painting backend's simple controllers/models/routes/validations/utils architecture. No Redis, queues, microservices or new packages.
 
-> This PR includes Phase 1 + Phase 2 (single-admin auth). **Exams, attempts, autosave, grading, results and load tests do not exist yet. This backend is not ready for tomorrow's examination.**
+**Current state:** Admin authentication, quiz management, slot scheduling, student attempt start/recovery, versioned autosave, final submission and trusted server-side scoring are implemented in stacked feature branches. **Admin result listing, pagination, CSV export, frontend migration, production scheduling and 250-student load testing are NOT implemented yet. Not ready for a live exam.**
 
-## Structure
+## Local setup
 
+1. Node.js 22+: `npm install` and commit generated `package-lock.json` before deployment.
+2. `Copy-Item .env.example .env` in PowerShell; set exact `CORS_ORIGINS`, `MONGODB_URI`, strong `JWT_SECRET` and admin credentials privately.
+3. Rotate any credentials previously exposed in chat; URL-encode MongoDB URI password special characters.
+4. `npm run db:check`, `npm run db:seed`, `npm run dev`, `npm test`.
+
+## Student exam flow
+
+- `GET /api/v1/student/quizzes` — available published quiz metadata.
+- `POST /api/v1/student/attempts/start` — name, numeric-only roll string and UUIDv4 `startKey`. No student login/signup.
+- `GET /api/v1/student/attempts/current` — safe questions and server-saved draft; never returns private answer keys.
+- `PUT /api/v1/student/attempts/draft` — complete answer snapshot and increasing version; safe retries and stale-write protection.
+- `POST /api/v1/student/attempts/submit` — save final answers and trusted grading in **one conditional MongoDB update**. Duplicate retries return the original receipt.
+
+For submit/draft, send `{ "version": 1, "answers": [{ "questionId": "507f1f77bcf86cd799439011", "answer": "A", "timeSpent": 5, "timedOut": false }] }`; submit optionally accepts `"reason": "student"`. Use `credentials: "include"` in browser requests. Roll number must contain only ASCII digits; it remains a string to preserve leading zeros.
+
+## Scoring rules
+
+- MCQ and True/False: scored **only** against private MongoDB answer keys.
+- Short-text and coding answers: **manual review required** when answered. No browser-provided test results or points are trusted, and user JavaScript is never executed in this backend.
+- Unanswered manual questions are awarded zero without review.
+- Score starts as partial while `gradingStatus = "pending_review"`. Final score is complete only when `gradingStatus = "graded"`.
+- Grade fields (`score, maxScore, objectiveScore, pendingReviewCount, gradingStatus, manualGrades`) live on the same `Attempt` document; no extra result collection.
+- Students never receive admin scores in the submit receipt. Student result publication policy and UI are later-phase work.
+
+## Admin review APIs (admin JWT cookie required)
+
+- `GET /api/v1/admin/attempts/:id`: read an attempt's stored answers and grading state.
+- `PATCH /api/v1/admin/attempts/:id/grade`: manual grade one answered coding/short-text question.
+
+Example:
+
+```json
+{ "questionId": "507f1f77bcf86cd799439011", "pointsAwarded": 2 }
 ```
-src/
-  app.js                      # Express configuration, routes and server startup
-  config/                     # Database, environment, admin cookie
-  controllers/auth/           # Small admin login / me / logout handlers
-  middlewares/                # Auth, origin check, Joi validator, errors
-  models/                     # Mongoose models
-  routes/admin/               # Admin API routes
-  validations/                # Joi request schemas
-  utils/                      # Response and JWT helpers
-  seeds/adminSeed.js          # One-time seed
-  scripts/check-db.js         # Database connectivity check
-test/                         # Unit and API contract tests
-```
 
-## Setup
+Grades are validated against the question's maximum marks, recomputed server-side and protected against conflicting admin updates by `gradingVersion`. All admin state-changing requests require trusted `Origin`.
 
-1. Install Node.js 22 or newer.
-2. `npm install` (commit the generated `package-lock.json` before production deployment).
-3. Copy `.env.example` to `.env`. Never commit secrets.
-4. Set `MONGODB_URI`, exact `CORS_ORIGINS`, a random `JWT_SECRET` (32+ characters), and a strong `ADMIN_EMAIL`/`ADMIN_PASSWORD` (12-72 bytes).
-5. Set a **newly rotated Atlas password** because old credentials were shared in chat. URL-encode special characters in URI passwords, and grant Atlas Network Access only to your current IP.
-6. `npm run db:check`
-7. `npm run db:seed` (does not overwrite an existing admin).
-8. `npm run dev` or `npm start`
-9. `npm run check` and `npm test`
-
-Generate a JWT secret locally:
+## Expired-attempt processing
 
 ```sh
-node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+npm run attempts:finalize
 ```
 
-## APIs
+This one-shot command finds expired-but-unsubmitted attempts, saves the **last successfully autosaved draft** (never late client answers) and grades them. It is idempotent and safe to rerun.
 
-| Method | Endpoint | Access |
-|---|---|---|
-| GET | `/api/v1/health` | Public |
-| GET | `/api/v1/ready` | Public, database connectivity |
-| POST | `/api/v1/admin/auth/login` | Email + password |
-| GET | `/api/v1/admin/auth/me` | Admin session |
-| POST | `/api/v1/admin/auth/logout` | Admin session |
+On AWS EC2, schedule the command every minute using an OS cron job **after the deployment phase**. A scheduler is not configured yet. The script does not run automatically during local development.
 
-Login returns `{ success, message, data: { id, email } }` and an HttpOnly cookie. Use `credentials: "include"` in the browser. POST login/logout requests require an exact allowed `Origin` header.
+## Limitations and release checklist
 
-For cross-site Vercel / AWS requests use HTTPS with `NODE_ENV=production`, `COOKIE_SAME_SITE=none`, and exact frontend origin. Prefer same-site custom domain + `lax` when feasible.
-
-## Roadmap
-
-1. Foundation + single admin: done here
-2. Exam and question management
-3. Students and six exam slots, no signup/login
-4. Attempt validation + server-side deadlines
-5. Answer autosave, reliable submissions, violations
-6. Trusted scoring and admin results with real MongoDB pagination
-7. 250-concurrent-user staging test, frontend migration, AWS deployment
-
-No Redis, Docker, microservices or third-party integrations have been added.
+- Any name + numeric roll number is allowed; **roll number alone cannot verify identity**. First claimant controls that attempt.
+- The frontend still uses Firebase and accepts alphanumeric rolls. Frontend migration and numeric validation remain necessary.
+- Current tests mock database operations. **Actual Atlas transaction capacity, concurrent write consistency, 250-user load and browser recovery still require staging verification**.
+- Untrusted code execution, automatic coding grading, and real-time anti-cheating detection are intentionally not implemented.
+- Admin pagination/search/CSV and optional result publishing are next phases.
+- MongoDB Atlas Free limits may require reduced autosave frequency and batch testing under the 250-student peak load.
