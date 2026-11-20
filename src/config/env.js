@@ -1,47 +1,48 @@
 import "dotenv/config";
-import Joi from "joi";
 
-const envSchema = Joi.object({
-  NODE_ENV: Joi.string().valid("development", "test", "production").default("development"),
-  HOST: Joi.string().ip({ version: ["ipv4", "ipv6"] }).default("127.0.0.1"),
-  PORT: Joi.number().integer().min(1).max(65535).default(5000),
-  MONGODB_URI: Joi.string().pattern(/^mongodb(?:\+srv)?:\/\//).required(),
-  CORS_ORIGINS: Joi.string().required(),
-}).unknown(true);
+// Keep environment parsing in one place. Do not log secrets or MongoDB URIs.
+export function loadConfig(env = process.env) {
+  const allowedOrigins = (env.CORS_ORIGINS || "")
+    .split(",").map((origin) => origin.trim()).filter(Boolean);
 
-export function loadConfig(source = process.env) {
-  const { value, error } = envSchema.validate(source, { abortEarly: false });
-  if (error) {
-    // Never log credentials from environment values.
-    const fields = error.details.map(({ path }) => path.join(".")).join(", ");
-    throw new Error("Invalid environment configuration: " + fields);
+  if (!env.MONGODB_URI?.startsWith("mongodb://") &&
+      !env.MONGODB_URI?.startsWith("mongodb+srv://")) {
+    throw new Error("MONGODB_URI is required");
   }
-
-  const allowedOrigins = [...new Set(value.CORS_ORIGINS.split(",").map((s) => s.trim()))];
-  if (allowedOrigins.some((origin) => !origin || origin === "*")) {
-    throw new Error("CORS_ORIGINS must contain explicit origins, not '*' or empty entries");
+  if (!env.JWT_SECRET || env.JWT_SECRET.length < 32 ||
+      /^(REPLACE_|GENERATE_)/.test(env.JWT_SECRET)) {
+    throw new Error("JWT_SECRET must contain a random 32+ character secret");
+  }
+  if (!allowedOrigins.length || allowedOrigins.includes("*")) {
+    throw new Error("CORS_ORIGINS must contain explicit origins");
+  }
+  const nodeEnv = env.NODE_ENV || "development";
+  const cookieSameSite = env.COOKIE_SAME_SITE || "lax";
+  if (!["lax", "strict", "none"].includes(cookieSameSite)) {
+    throw new Error("Invalid COOKIE_SAME_SITE");
+  }
+  if (cookieSameSite === "none" && nodeEnv !== "production") {
+    throw new Error("SameSite=None requires production HTTPS");
   }
 
   for (const origin of allowedOrigins) {
     let url;
-    try {
-      url = new URL(origin);
-    } catch {
-      throw new Error("CORS_ORIGINS must contain valid http(s) origins");
-    }
+    try { url = new URL(origin); } catch { throw new Error("Invalid CORS origin"); }
     if (!["http:", "https:"].includes(url.protocol) || url.origin !== origin) {
-      throw new Error("CORS_ORIGINS must contain origins only (no paths or trailing slashes)");
+      throw new Error("CORS_ORIGINS must contain origins only");
     }
-    if (value.NODE_ENV === "production" && url.protocol !== "https:") {
-      throw new Error("Production CORS_ORIGINS must use https");
+    if (nodeEnv === "production" && url.protocol !== "https:") {
+      throw new Error("Production CORS origins must use HTTPS");
     }
   }
 
   return {
-    nodeEnv: value.NODE_ENV,
-    host: value.HOST,
-    port: value.PORT,
-    mongoUri: value.MONGODB_URI,
+    nodeEnv,
+    port: Number(env.PORT || 5000),
+    host: env.HOST || "127.0.0.1",
+    mongoUri: env.MONGODB_URI,
+    jwtSecret: env.JWT_SECRET,
     allowedOrigins,
+    cookieSameSite,
   };
 }
