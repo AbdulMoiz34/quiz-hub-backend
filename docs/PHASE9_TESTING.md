@@ -146,3 +146,57 @@ MongoDB pool sizes, adding retries, increasing HTTP timeouts or
 restructuring the seat allocator. In particular, blindly retrying a
 request after an unclear response can lead to ambiguity; use the
 existing persisted `startKey` and idempotent API instead.
+
+
+## 2026-11-20: 250-user ECONNREFUSED diagnosis
+
+One **real** burst of 250 students finished 232/250. All 18 failures were
+`start:ECONNREFUSED` for students 233–250 (approximately 765–773 ms).
+The other 232 journeys had equal attempt/submission/seat counts.
+Start p95 among successful requests was 41,278 ms. **Not a pass.**
+
+These 18 errors happen while opening an HTTP connection: no Express HTTP
+response was received. That does not prove a MongoDB query failed.
+
+To distinguish local Windows HTTP accept/burst behavior from slow
+Atlas/seat-allocation requests, run these **in this order**:
+
+```powershell
+# No TEST_MONGODB_URI needed. The local server uses GET /health only.
+node src/scripts/testExamJourney.js --users=250 --transport-only
+
+# Real Atlas integration (requires private TEST_MONGODB_URI targeting
+# exactly quiz_hub_test; do NOT run against live quiz_hub):
+npm run test:load
+
+# Diagnostic arrival ramp only (NOT a 250-at-once success criterion):
+npm run test:load -- --ramp-ms=5000
+```
+
+The HTTP-only probe creates **no MongoDB connection or fixture**.
+It reports `tcpConnectionsAccepted`, failure codes and successful
+health latency. It uses the **same local Node.js Express listener** as
+the real test, without database work.
+
+Interpret the comparison:
+
+- **HTTP-only burst also refuses connections:** local Windows/Node
+  TCP accept backlog or socket handling is the leading suspect;
+  verify with a separate-process/external load generator, not MongoDB tuning.
+- **HTTP-only burst succeeds but real exam start fails:** HTTP listener
+  can accept an idle burst, so investigate HTTP/DB request pressure,
+  seat collisions, Atlas tier, Mongo query latency and event-loop load.
+  This does not automatically prove which subsystem is responsible.
+- **Ramped exam test works but simultaneous burst fails:** suggests
+  burst sensitivity. Do not count a ramped pass as meeting the burst goal.
+- **Both pass:** repeat several times and verify p95 and MongoDB counts.
+  A single success is not a production readiness certificate.
+
+The server is started with the Node default `listen()` backlog. Node
+documents a **requested default of 511**, but the operating system
+determines the effective queue. On Windows, Winsock may refuse
+connections when the pending queue is full. These are possibilities
+to be measured, **not established root causes**.
+
+No production `app.js`, MongoDB pool configuration, seat logic, retry
+policy or dependencies are modified by this diagnostic.

@@ -15,6 +15,7 @@ const usersArg = process.argv.find((arg) => arg.startsWith("--users="));
 const userCount = Number(usersArg?.split("=")[1] || 5);
 const rampArg = process.argv.find((arg) => arg.startsWith("--ramp-ms="));
 const rampMs = Number(rampArg?.split("=")[1] || 0);
+const transportOnly = process.argv.includes("--transport-only");
 const uri = process.env.TEST_MONGODB_URI;
 const origin = "http://localhost:5173";
 const secret = randomBytes(32).toString("hex");
@@ -27,7 +28,7 @@ if (!Number.isInteger(rampMs) || rampMs < 0 || rampMs > 60_000) {
   console.error("Use --ramp-ms=0 through --ramp-ms=60000");
   process.exit(1);
 }
-if (!uri || !/^mongodb(?:\+srv)?:\/\//.test(uri)) {
+if (!transportOnly && (!uri || !/^mongodb(?:\+srv)?:\/\//.test(uri))) {
   console.error("Set TEST_MONGODB_URI for a separate quiz_hub_test database.");
   process.exit(1);
 }
@@ -46,6 +47,7 @@ let slot;
 let admin;
 let server;
 let base;
+let acceptedConnections = 0;
 
 function percentile(values, percent) {
   if (!values.length) return null;
@@ -103,6 +105,7 @@ function expectOk(response, action) {
 
 async function listen() {
   server = createApp(config).listen(0, "127.0.0.1");
+  server.on("connection", () => { acceptedConnections += 1; });
   await new Promise((resolve, reject) => {
     if (server.listening) return resolve();
     server.once("listening", resolve);
@@ -117,6 +120,53 @@ async function closeServer() {
   server = null;
   await new Promise((resolve, reject) =>
     closing.close((error) => error ? reject(error) : resolve()));
+}
+
+// Isolate local TCP/HTTP accept behavior from MongoDB queries and seat writes.
+// No database connection, fixture creation, or exam-state mutation occurs.
+async function runTransportProbe() {
+  await listen();
+  const start = performance.now();
+  const results = await Promise.allSettled(
+    Array.from({ length: userCount }, (_, i) => (async () => {
+      if (rampMs) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.round(i * rampMs / (userCount - 1))));
+      }
+      const response = await http("/api/v1/health");
+      expectOk(response, "health " + (i + 1));
+      return response.ms;
+    })())
+  );
+
+  const successLatencies = results.filter((r) => r.status === "fulfilled")
+    .map((r) => r.value);
+  const failures = results.filter((r) => r.status === "rejected")
+    .map((r) => ({
+      kind: r.reason?.kind || "error",
+      causeCode: r.reason?.causeCode || null,
+      httpStatus: r.reason?.httpStatus || null,
+      elapsedMs: r.reason?.elapsedMs || null,
+    }));
+  const failureCounts = {};
+  for (const failure of failures) {
+    const key = failure.causeCode || failure.httpStatus || failure.kind;
+    failureCounts[key] = (failureCounts[key] || 0) + 1;
+  }
+
+  console.info(JSON.stringify({
+    test: "HTTP-only localhost connection burst; no MongoDB",
+    requestedClients: userCount,
+    rampMs,
+    successfulResponses: successLatencies.length,
+    failures: failures.length,
+    failureCounts,
+    firstFailures: failures.slice(0, 8),
+    tcpConnectionsAccepted: acceptedConnections,
+    elapsedMs: Math.round(performance.now() - start),
+    p95SuccessfulHealthLatencyMs: percentile(successLatencies, 95),
+  }, null, 2));
+  assert.equal(failures.length, 0, "HTTP-only transport probe failed");
 }
 
 async function runStudent(i, questionId) {
@@ -349,7 +399,8 @@ async function run() {
 }
 
 try {
-  await run();
+  if (transportOnly) await runTransportProbe();
+  else await run();
 } catch (error) {
   // Never log MongoDB driver objects or connection URIs: they can contain credentials.
   console.error("TEST FAILED:", error instanceof Error ? error.message.split("mongodb")[0].slice(0, 250) : "Unknown failure");
@@ -366,7 +417,9 @@ try {
       if (admin?._id) await Admin.deleteOne({ _id: admin._id });
     }
     await disconnectDB();
-    console.info("Temporary integration fixtures cleaned up.");
+    console.info(transportOnly
+      ? "HTTP-only probe finished: no database connection or fixtures."
+      : "Temporary integration fixtures cleaned up.");
   } catch {
     console.error("Cleanup failed; check temporary integration fixtures in quiz_hub_test");
     process.exitCode = 1;
