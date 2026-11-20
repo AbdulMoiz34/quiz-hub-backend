@@ -58,7 +58,7 @@ test("server increments unique violations atomically and stops at threshold", as
   };
   let state = {
     _id: attemptId, quiz: quizId, status: "started",
-    studentName: "A Student", email: "student@example.test", phone: "+923001234567",
+    studentName: "A Student", email: "student@example.test", phone: "03001234567",
     startedAt: new Date(), expiresAt: new Date(Date.now() + 3600_000),
     violationCount: 0, violations: [], answers: [], draftVersion: 0,
   };
@@ -139,7 +139,7 @@ test("admin can delete a submitted attempt; old cookie revoked, email reusable",
   const oldKey = randomUUID();
   let state = {
     _id: attemptId, quiz: quizId, status: "submitted",
-    studentName: "Student", email: "student@example.test", phone: "+923001234567",
+    studentName: "Student", email: "student@example.test", phone: "03001234567",
     startKeyHash: createHash("sha256").update(oldKey).digest("hex"),
     startedAt: new Date(), expiresAt: new Date(Date.now() + 60_000),
   };
@@ -181,7 +181,7 @@ test("admin can delete a submitted attempt; old cookie revoked, email reusable",
 
       const fresh = await request(base, "/api/v1/student/attempts/start", "POST", {
         quizId: String(quizId), studentName: "Student",
-        email: "Student@Example.test", phone: "+923001234567",
+        email: "Student@Example.test", phone: "03001234567",
         startKey: randomUUID(),
       }, "");
       assert.equal(fresh.status, 200);

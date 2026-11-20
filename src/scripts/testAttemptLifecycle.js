@@ -134,7 +134,7 @@ async function run() {
     return {
       quizId, studentName: "Lifecycle Student",
       email: label + "-" + id + "@example.test",
-      phone: "+923001234567", startKey,
+      phone: "03001234567", startKey,
     };
   }
   async function start(body) {

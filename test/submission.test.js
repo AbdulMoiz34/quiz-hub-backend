@@ -62,7 +62,7 @@ async function withFakeDatabase(callback, expired = false) {
   let writes = 0;
   let state = {
     _id: attemptId, quiz: quizId,
-    studentName: "Ahmed Ali", email: "ahmed@example.test", phone: "+923001234567",
+    studentName: "Ahmed Ali", email: "ahmed@example.test", phone: "03001234567",
     status: "started", answers: [], draftVersion: 0,
     startedAt: new Date(Date.now() - 20_000),
     expiresAt: new Date(Date.now() + (expired ? -1000 : 60_000)),
