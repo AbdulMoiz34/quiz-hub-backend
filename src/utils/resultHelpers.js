@@ -12,6 +12,14 @@ export function buildResultFilter({ quizId, status, gradingStatus, email, cursor
   return filter;
 }
 
+// Only finalized and fully graded attempts have a meaningful result.
+// The score is assigned by the backend, never calculated from client answers.
+export function resultPercentage({ status, gradingStatus, score, maxScore }) {
+  if (status !== "submitted" || gradingStatus === "pending_review") return null;
+  if (!Number.isFinite(score) || !Number.isFinite(maxScore) || maxScore <= 0) return null;
+  return Math.round((score / maxScore) * 100);
+}
+
 export function resultSummary(row) {
   return {
     id: String(row._id),
@@ -25,6 +33,7 @@ export function resultSummary(row) {
     submittedAt: row.submittedAt || null,
     score: row.score ?? 0,
     maxScore: row.maxScore ?? 0,
+    percentage: resultPercentage(row),
     violationCount: row.violationCount ?? 0,
     gradingStatus: row.gradingStatus || "ungraded",
     pendingReviewCount: row.pendingReviewCount ?? 0,
@@ -41,21 +50,35 @@ export function csvCell(value) {
 }
 
 export const CSV_HEADERS = [
-  "Attempt ID", "Student Name", "Email", "Phone",
-  "Status", "Started At", "Submitted At", "Score", "Max Score",
-  "Violations", "Grading Status", "Pending Review", "Answered", "Unanswered",
+  "Full Name", "Email", "Phone Number", "Status",
+  "Started At", "Submitted At", "Score", "Max Score", "Percentage",
 ];
 
-function csvDate(value) {
-  return value ? new Date(value).toISOString() : "";
+// Always display Pakistan local time, regardless of the EC2 server's timezone.
+const pakistanDateFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Karachi",
+  month: "2-digit", day: "2-digit", year: "numeric",
+  hour: "2-digit", minute: "2-digit", hour12: true,
+});
+
+export function csvDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = Object.fromEntries(pakistanDateFormatter.formatToParts(date)
+    .filter((part) => part.type !== "literal")
+    .map((part) => [part.type, part.value]));
+  return `${parts.month}/${parts.day}/${parts.year} ${parts.hour}:${parts.minute}${parts.dayPeriod}`;
 }
 
 export function csvRow(row) {
+  const completed = row.status === "submitted";
+  const percentage = resultPercentage(row);
   return [
-    row._id, row.studentName, row.email, row.phone, row.status,
+    row.studentName, row.email, row.phone, row.status,
     csvDate(row.startedAt), csvDate(row.submittedAt),
-    row.score ?? 0, row.maxScore ?? 0, row.violationCount ?? 0,
-    row.gradingStatus || "ungraded", row.pendingReviewCount ?? 0,
-    row.answeredCount ?? 0, row.unansweredCount ?? 0,
+    completed ? row.score ?? 0 : "",
+    completed ? row.maxScore ?? 0 : "",
+    percentage === null ? "" : `${percentage}%`,
   ].map(csvCell).join(",") + "\r\n";
 }

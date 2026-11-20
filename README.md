@@ -78,3 +78,17 @@ No quiz deletion or separate student/profile collection has been introduced.
 - `npm run attempts:finalize`: one-shot expiry cleanup.
 
 Real DB tests require `TEST_MONGODB_URI` and must **never** run against production. Verify 200, 250, and 300 realistic students and test lost responses, retries, browser recovery, violation races and admin resets before live exams. A green GitHub Actions check alone does not establish production capacity.
+
+## Results and CSV export
+
+The admin results API reports a rounded whole-number `percentage` for
+submitted, fully graded attempts with a positive maximum score. In-progress,
+terminated, and pending-manual-review attempts have no final percentage.
+
+The authenticated CSV export includes exactly these columns:
+`Full Name, Email, Phone Number, Status, Started At, Submitted At, Score,
+Max Score, Percentage`. Timestamps use Pakistan Standard Time
+(`Asia/Karachi`) in `MM/DD/YYYY hh:mmAM` format. Percentage values are
+rounded to whole numbers and include the `%` sign; unfinished attempts have
+blank score and percentage cells. Existing CSV streaming, filtering, and
+Excel formula-escaping remain unchanged.
