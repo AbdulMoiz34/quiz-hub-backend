@@ -1,66 +1,38 @@
 # Quiz Hub Backend
 
-Express.js + MongoDB Atlas examination API. **Single `src/app.js` entry point**, following the simple layering in the Rakhshinda Art backend.
+Node.js 22 + Express + MongoDB Atlas — one modular monolith. Code style follows the existing Rakhshinda Art backend: a single `src/app.js`, explicit routes, small controllers, Joi validations, Mongoose models, seed scripts and minimal shared helpers.
 
-> This PR includes Phase 1 + Phase 2 (single-admin auth). **Exams, attempts, autosave, grading, results and load tests do not exist yet. This backend is not ready for tomorrow's examination.**
+**Status:** Foundation, single-admin authentication and admin-side quiz creation. **Not ready for a real exam** until student eligibility, exam attempts, autosave, scoring, results and 250-user load testing exist.
 
-## Structure
+## Local setup
 
-```
-src/
-  app.js                      # Express configuration, routes and server startup
-  config/                     # Database, environment, admin cookie
-  controllers/auth/           # Small admin login / me / logout handlers
-  middlewares/                # Auth, origin check, Joi validator, errors
-  models/                     # Mongoose models
-  routes/admin/               # Admin API routes
-  validations/                # Joi request schemas
-  utils/                      # Response and JWT helpers
-  seeds/adminSeed.js          # One-time seed
-  scripts/check-db.js         # Database connectivity check
-test/                         # Unit and API contract tests
-```
+1. `npm install` (commit generated `package-lock.json` before production).
+2. `cp .env.example .env` (on PowerShell: `Copy-Item .env.example .env`).
+3. Configure MongoDB Atlas connection, exact CORS origins, a 32+ character random `JWT_SECRET` and private admin credentials. Rotate any previously shared database password; URL-encode password special characters.
+4. `npm run db:check` then `npm run db:seed` (safe to rerun, does not overwrite existing admin).
+5. `npm run dev`, `npm run check`, `npm test`.
 
-## Setup
+## Endpoints
 
-1. Install Node.js 22 or newer.
-2. `npm install` (commit the generated `package-lock.json` before production deployment).
-3. Copy `.env.example` to `.env`. Never commit secrets.
-4. Set `MONGODB_URI`, exact `CORS_ORIGINS`, a random `JWT_SECRET` (32+ characters), and a strong `ADMIN_EMAIL`/`ADMIN_PASSWORD` (12-72 bytes).
-5. Set a **newly rotated Atlas password** because old credentials were shared in chat. URL-encode special characters in URI passwords, and grant Atlas Network Access only to your current IP.
-6. `npm run db:check`
-7. `npm run db:seed` (does not overwrite an existing admin).
-8. `npm run dev` or `npm start`
-9. `npm run check` and `npm test`
-
-Generate a JWT secret locally:
-
-```sh
-node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
-```
-
-## APIs
-
-| Method | Endpoint | Access |
+| Method | Path | Access |
 |---|---|---|
 | GET | `/api/v1/health` | Public |
-| GET | `/api/v1/ready` | Public, database connectivity |
-| POST | `/api/v1/admin/auth/login` | Email + password |
-| GET | `/api/v1/admin/auth/me` | Admin session |
-| POST | `/api/v1/admin/auth/logout` | Admin session |
+| GET | `/api/v1/ready` | Public |
+| POST | `/api/v1/admin/auth/login` | Admin password |
+| GET | `/api/v1/admin/auth/me` | Admin |
+| POST | `/api/v1/admin/auth/logout` | Admin |
+| GET | `/api/v1/admin/quizzes` | Admin; summaries only |
+| POST | `/api/v1/admin/quizzes` | Admin |
+| GET | `/api/v1/admin/quizzes/:id` | Admin; full question bank |
+| PUT | `/api/v1/admin/quizzes/:id` | Admin; unpublished only |
+| PATCH | `/api/v1/admin/quizzes/:id/publish` | Admin; only `{ "isPublished": true }` |
 
-Login returns `{ success, message, data: { id, email } }` and an HttpOnly cookie. Use `credentials: "include"` in the browser. POST login/logout requests require an exact allowed `Origin` header.
+All admin responses use `{ success, message, data }`. Admin cookie is HttpOnly; browser requests use `credentials: "include"`. Admin POST/PUT/PATCH requests require an allowed `Origin`. For cross-site Vercel/AWS, HTTPS + `COOKIE_SAME_SITE=none` in production may be required; same-site subdomains with `lax` are preferable.
 
-For cross-site Vercel / AWS requests use HTTPS with `NODE_ENV=production`, `COOKIE_SAME_SITE=none`, and exact frontend origin. Prefer same-site custom domain + `lax` when feasible.
+## Security and scope
 
-## Roadmap
+Quiz model embeds questions and their correct answers in one MongoDB document for simplicity; **only admin-authenticated routes expose them**. Student question delivery must be added later through a verified attempt API which explicitly removes answer keys and private coding test cases. No public question bank API has been added.
 
-1. Foundation + single admin: done here
-2. Exam and question management
-3. Students and six exam slots, no signup/login
-4. Attempt validation + server-side deadlines
-5. Answer autosave, reliable submissions, violations
-6. Trusted scoring and admin results with real MongoDB pagination
-7. 250-concurrent-user staging test, frontend migration, AWS deployment
+Editing is blocked after publishing. Publishing currently activates a quiz for future student/session flows; closing or unpublishing during active attempts needs rules in the upcoming attempt module. No grading or sandboxed code execution is implemented.
 
-No Redis, Docker, microservices or third-party integrations have been added.
+No extra packages, Redis, sockets, queues or microservices.
