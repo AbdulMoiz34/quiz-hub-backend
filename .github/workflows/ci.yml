@@ -20,3 +20,5 @@ jobs:
         run: npm run check
       - name: Tests
         run: npm test
+      - name: Local transport-only smoke (no database)
+        run: node src/scripts/testExamJourney.js --users=5 --transport-only
