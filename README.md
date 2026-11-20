@@ -58,6 +58,7 @@ No quiz deletion or separate student/profile collection has been introduced.
 - `npm run test:db`: five HTTP exam journeys against a separate database explicitly named `quiz_hub_test`.
 - `npm run test:load`: 250 simultaneous student journeys; supports `node src/scripts/testExamJourney.js --users=300`.
 - `npm run test:races`: real MongoDB autosave-vs-submit/restart tests.
+- `npm run test:journey`: real MongoDB duplicate-email race, expiry, violation termination, admin deletion and reattempt tests.
 - `npm run attempts:finalize`: one-shot expiry cleanup.
 
 Real DB tests require `TEST_MONGODB_URI` and must **never** run against production. Verify 200, 250, and 300 realistic students and test lost responses, retries, browser recovery, violation races and admin resets before live exams. A green GitHub Actions check alone does not establish production capacity.

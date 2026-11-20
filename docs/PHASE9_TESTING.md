@@ -16,6 +16,7 @@ PowerShell example:
 $env:TEST_MONGODB_URI="mongodb+srv://USER:PASSWORD@HOST/quiz_hub_test?retryWrites=true&w=majority"
 npm run test:db
 npm run test:races
+npm run test:journey
 npm run test:load
 node src/scripts/testExamJourney.js --users=300
 Remove-Item Env:TEST_MONGODB_URI
@@ -28,6 +29,7 @@ Remove-Item Env:TEST_MONGODB_URI
 | `npm test` | Fast mocked API/unit tests for email uniqueness, validation, submissions, violations, admin delete and result filters |
 | `npm run test:db` | Five actual HTTP start → current → draft → submit journeys with real MongoDB |
 | `npm run test:races` | Real autosave-vs-submit and duplicate-submit race regressions |
+| `npm run test:journey` | Real HTTP/DB registration, expiry, parallel duplicate-email starts, violations, admin deletion and reattempt |
 | `npm run test:load` | 250 simulated HTTP student journeys with unique emails |
 | `node src/scripts/testExamJourney.js --users=200` | 200 simultaneous clients |
 | `node src/scripts/testExamJourney.js --users=300` | 300 simultaneous clients |
@@ -41,7 +43,7 @@ Each integration test creates an isolated published quiz and temporary attempts,
 
 - [ ] All active old slot attempts finished; backups and correct MongoDB index migration completed
 - [ ] `npm run check` and `npm test` pass
-- [ ] `npm run test:db` and `npm run test:races` pass with an isolated real MongoDB
+- [ ] `npm run test:db`, `npm run test:races` and `npm run test:journey` pass with an isolated real MongoDB
 - [ ] 200, 250, and 300 client bursts pass repeatedly, no lost answers or duplicates
 - [ ] Real-browser registration, 60-minute countdown, recover after refresh/disconnect and cutoff tested
 - [ ] Violation event retries, threshold termination and post-termination write blocking tested
