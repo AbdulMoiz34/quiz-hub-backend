@@ -247,6 +247,7 @@ test("expired attempts cannot fetch questions even with a valid cookie", async (
       const data = (await response.json()).data;
       assert.equal(data.attempt.status, "expired");
       assert.deepEqual(data.questions, []);
+      assert.ok(Number.isFinite(Date.parse(data.serverNow)), "Server time must be present for expired sessions");
     });
   } finally {
     Attempt.findById = original;

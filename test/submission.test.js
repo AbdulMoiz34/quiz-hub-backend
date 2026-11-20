@@ -183,6 +183,7 @@ test("draft saves versioned answers, identical retry is safe, stale writes rejec
       assert.equal(current.status, 200);
       const data = (await current.json()).data;
       assert.equal(data.draft.version, 2);
+      assert.ok(Number.isFinite(Date.parse(data.serverNow)), "Server time required for stable deadline");
       assert.equal(data.draft.answers[0].answer, "A");
       assert.ok(!("correctAnswer" in data.questions[0]));
     });
@@ -248,4 +249,42 @@ test("expired submission finalizes ONLY previously saved draft, not late answers
       assert.equal(db.countWrites(), 1);
     });
   }, true);
+});
+
+test("attempt-id header blocks writes after another tab replaces the cookie", async () => {
+  await withFakeDatabase(async (db) => {
+    await withServer(async (base) => {
+      const mismatchedId = new mongoose.Types.ObjectId().toString();
+      for (const [method, path] of [
+        ["PUT", "/api/v1/student/attempts/draft"],
+        ["POST", "/api/v1/student/attempts/submit"],
+      ]) {
+        const response = await fetch(base + path, {
+          method,
+          headers: {
+            Origin: origin,
+            Cookie: cookie(),
+            "Content-Type": "application/json",
+            "X-Expected-Attempt-Id": mismatchedId,
+          },
+          body: JSON.stringify({ version: 1, answers, reason: "student" }),
+        });
+        assert.equal(response.status, 409);
+      }
+      assert.equal(db.countWrites(), 0, "A replaced cookie must not mutate another attempt");
+
+      const correct = await fetch(base + "/api/v1/student/attempts/draft", {
+        method: "PUT",
+        headers: {
+          Origin: origin,
+          Cookie: cookie(),
+          "Content-Type": "application/json",
+          "X-Expected-Attempt-Id": String(attemptId),
+        },
+        body: JSON.stringify({ version: 1, answers }),
+      });
+      assert.equal(correct.status, 200);
+      assert.equal(db.countWrites(), 1);
+    });
+  });
 });
