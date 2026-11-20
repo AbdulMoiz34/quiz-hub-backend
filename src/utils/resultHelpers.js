@@ -76,7 +76,7 @@ export function csvRow(row) {
   const percentage = resultPercentage(row);
   return [
     row.studentName, row.email, row.phone, row.status,
-    csvDate(row.startedAt), csvDate(row.submittedAt),
+    csvDate(row.startedAt), completed ? csvDate(row.submittedAt) : "",
     completed ? row.score ?? 0 : "",
     completed ? row.maxScore ?? 0 : "",
     percentage === null ? "" : `${percentage}%`,

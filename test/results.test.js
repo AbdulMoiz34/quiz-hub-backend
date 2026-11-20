@@ -280,4 +280,13 @@ test("CSV contains only requested fields; unfinished attempts have blank scores"
     submittedAt: null, score: 0, maxScore: 0,
   });
   assert.equal(started.split(",").slice(-4).join(","), '"","","",""\r\n');
+  // Termination timestamps are not successful submission timestamps.
+  const terminated = csvRow({
+    studentName: "Candidate", email: "candidate@example.com",
+    phone: "03111111222", status: "terminated",
+    startedAt: "2026-11-20T09:00:00Z",
+    submittedAt: "2026-11-20T09:05:00Z",
+  });
+  assert.ok(terminated.includes('"11/20/2026 02:00PM","","","",""'));
+  assert.ok(!terminated.includes("02:05PM"));
 });
