@@ -56,8 +56,12 @@ export const startAttempt = (config) => async (req, res) => {
     if (error.code !== 11000) throw error;
     const winner = await Attempt.findOne({ quiz: quizId, email }).select("+startKeyHash");
     if (!winner) {
-      // Obsolete unique quiz+rollNo index? Run the documented DB migration.
-      return errorResponse(res, 409, "Unable to reserve attempt; contact admin");
+      // A different unique constraint (often a leftover rollNo index) rejected
+      // an entirely new email. Do not mislabel this as a duplicate attempt.
+      // Log no student details or database driver internals.
+      console.error("New attempt rejected by an unexpected unique index. Run npm run db:migrate:check.");
+      res.set("Retry-After", "60");
+      return errorResponse(res, 503, "Quiz registration is temporarily unavailable. Please try again shortly.");
     }
     if (winner.startKeyHash === startKeyHash) return issueSession(res, config, winner);
     return errorResponse(res, 409, "This email has already attempted this quiz");

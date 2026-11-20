@@ -2,6 +2,7 @@ import "dotenv/config";
 import mongoose from "mongoose";
 import { connectDB, disconnectDB } from "../config/db.js";
 import { loadConfig } from "../config/env.js";
+import { inspectAttemptIndexes } from "../utils/attemptIndexReadiness.js";
 
 // Read-only preview: npm run db:migrate:check
 // Explicit application after a verified backup and legacy exam completion:
@@ -52,12 +53,15 @@ async function main() {
     expiresAt: { $gt: new Date() },
   }) : 0;
 
+  const state = inspectAttemptIndexes(indexes);
   console.info(JSON.stringify({
     mode: apply ? "apply" : "read-only check",
     database: db.databaseName,
     activeLegacyAttempts: activeLegacy,
-    emailUniqueIndexReady: indexes.some(isReady),
+    emailUniqueIndexReady: state.emailUniqueIndexReady,
+    blockingUniqueIndexNames: state.blockingUniqueIndexNames,
     obsoleteIndexNames: oldIndexes.map((index) => index.name),
+    readyForNewStudents: state.ready,
   }, null, 2));
 
   if (check) {
@@ -66,6 +70,13 @@ async function main() {
   }
   if (activeLegacy > 0) {
     throw new Error("REFUSED: active legacy attempts must finish before migration");
+  }
+
+  const knownObsolete = new Set(oldIndexes.map((index) => index.name));
+  const unknownUnique = state.blockingUniqueIndexNames.filter((name) => !knownObsolete.has(name));
+  if (unknownUnique.length) {
+    // Unknown constraints may protect other data. Never drop them automatically.
+    throw new Error("REFUSED: unknown unique index exists; inspect it before migration");
   }
 
   // Build the replacement constraint before removing the old unique index.
@@ -88,6 +99,7 @@ async function main() {
 
   const finalIndexes = await collection.indexes();
   if (!finalIndexes.some(isReady) ||
+      !inspectAttemptIndexes(finalIndexes).ready ||
       finalIndexes.some((index) => obsoleteKeys.has(JSON.stringify(index.key)))) {
     throw new Error("Migration verification failed; inspect database indexes");
   }

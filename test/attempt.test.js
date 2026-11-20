@@ -132,6 +132,27 @@ test("server handles an atomic insert collision by returning its winner", async 
   }
 });
 
+test("unexpected unique index is a service issue, not a duplicate-email response", async () => {
+  const orig = { find: Attempt.findOne, create: Attempt.create, quiz: Quiz.findOne };
+  Attempt.findOne = () => ({ select: async () => null });
+  Quiz.findOne = () => ({ select: async () => ({ durationMinutes: 60 }) });
+  Attempt.create = async () => { const error = new Error("unexpected index collision"); error.code = 11000; throw error; };
+  const oldLog = console.error;
+  console.error = () => {};
+  try {
+    await withServer(async (base) => {
+      const response = await post(base, candidate);
+      assert.equal(response.status, 503);
+      assert.equal(response.headers.get("retry-after"), "60");
+      assert.match((await response.json()).message, /temporarily unavailable/);
+    });
+  } finally {
+    Object.assign(Attempt, { findOne: orig.find, create: orig.create });
+    Quiz.findOne = orig.quiz;
+    console.error = oldLog;
+  }
+});
+
 test("attempt access requires a valid cookie, write requires trusted Origin", async () => {
   await withServer(async (base) => {
     const current = await fetch(base + "/api/v1/student/attempts/current");
