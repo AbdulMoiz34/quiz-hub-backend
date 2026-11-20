@@ -7,7 +7,9 @@ import { createApp } from "../src/app.js";
 import { Admin } from "../src/models/admin.model.js";
 import { Attempt } from "../src/models/attempt.model.js";
 import { generateAdminJwt } from "../src/utils/generateJwt.js";
-import { csvCell } from "../src/utils/resultHelpers.js";
+import {
+  csvCell, csvRow, csvDate, CSV_HEADERS, resultSummary, resultPercentage,
+} from "../src/utils/resultHelpers.js";
 import { listResultsSchema, exportResultsSchema } from "../src/validations/results.validation.js";
 
 const quiz = new mongoose.Types.ObjectId();
@@ -204,6 +206,16 @@ test("CSV exports ALL 1505 attempts, escapes formula cells, no answers", async (
     const csv = await r.text();
     assert.equal(csv.trimEnd().split("\r\n").length, 1506);
     assert.ok(csv.includes("'=HYPERLINK"));
+    const lines = csv.replace(/^\uFEFF/, "").trimEnd().split("\r\n");
+    assert.equal(lines[0], CSV_HEADERS.map(csvCell).join(","));
+    assert.equal(CSV_HEADERS.length, 9);
+    assert.equal(CSV_HEADERS[0], "Full Name");
+    assert.equal(CSV_HEADERS[8], "Percentage");
+    assert.ok(!lines[0].includes("Attempt ID"));
+    assert.ok(!lines[0].includes("Violations"));
+    assert.ok(csv.includes('"70%"'));
+    assert.ok(csv.includes('"11/20/2026 02:00PM"'));
+    assert.ok(csv.includes('"11/20/2026 02:30PM"'));
     assert.ok(!csv.includes("SECRET_PRIVATE_ANSWER"));
     assert.ok(!csv.includes("PRIVATE_START_KEY"));
     assert.ok(!csv.includes("private-question"));
@@ -225,4 +237,56 @@ test("empty result query returns no next cursor and no records", async () => {
     assert.equal(result.nextCursor, null);
     assert.equal(result.hasMore, false);
   }));
+});
+
+test("percentage rounds to nearest whole number using the trusted final score", () => {
+  assert.equal(resultPercentage({ status: "submitted", gradingStatus: "graded", score: 1, maxScore: 3 }), 33);
+  assert.equal(resultPercentage({ status: "submitted", gradingStatus: "graded", score: 2, maxScore: 3 }), 67);
+  assert.equal(resultPercentage({ status: "submitted", gradingStatus: "graded", score: 3, maxScore: 4 }), 75);
+  assert.equal(resultPercentage({ status: "submitted", gradingStatus: "graded", score: 0, maxScore: 40 }), 0);
+  assert.equal(resultPercentage({ status: "submitted", gradingStatus: "graded", score: 40, maxScore: 40 }), 100);
+  assert.equal(resultPercentage({ status: "started", score: 0, maxScore: 40 }), null);
+  assert.equal(resultPercentage({ status: "terminated", score: 0, maxScore: 40 }), null);
+  assert.equal(resultPercentage({ status: "submitted", gradingStatus: "pending_review", score: 5, maxScore: 40 }), null);
+  assert.equal(resultPercentage({ status: "submitted", score: 0, maxScore: 0 }), null);
+  assert.equal(resultSummary({ _id: quiz, quiz, status: "submitted", gradingStatus: "graded", score: 2, maxScore: 3 }).percentage, 67);
+  assert.equal(resultSummary({ _id: quiz, quiz, status: "started", score: 0, maxScore: 3 }).percentage, null);
+});
+
+test("CSV timestamp displays Pakistan time in MM/DD/YYYY hh:mmAM format", () => {
+  assert.equal(csvDate("2026-11-20T22:03:00.000Z"), "11/21/2026 03:03AM");
+  assert.equal(csvDate("2026-11-20T09:30:00.000Z"), "11/20/2026 02:30PM");
+  assert.equal(csvDate(null), "");
+  assert.equal(csvDate("invalid"), "");
+});
+
+test("CSV contains only requested fields; unfinished attempts have blank scores", () => {
+  const submitted = csvRow({
+    _id: "DO_NOT_INCLUDE", studentName: "Ali, Ahmed", email: "ali@example.com",
+    phone: "03111111222", status: "submitted",
+    startedAt: "2026-11-20T22:03:00Z",
+    submittedAt: "2026-11-20T23:05:00Z",
+    score: 2, maxScore: 3, violationCount: 2,
+  });
+  assert.equal(submitted, [
+    '"Ali, Ahmed"', '"ali@example.com"', '"03111111222"', '"submitted"',
+    '"11/21/2026 03:03AM"', '"11/21/2026 04:05AM"', '"2"', '"3"', '"67%"',
+  ].join(",") + "\r\n");
+  assert.ok(!submitted.includes("DO_NOT_INCLUDE"));
+  assert.ok(!submitted.includes("violation"));
+  const started = csvRow({
+    studentName: "Student", email: "student@example.com",
+    phone: "03001234567", status: "started", startedAt: "2026-11-20T09:00:00Z",
+    submittedAt: null, score: 0, maxScore: 0,
+  });
+  assert.equal(started.split(",").slice(-4).join(","), '"","","",""\r\n');
+  // Termination timestamps are not successful submission timestamps.
+  const terminated = csvRow({
+    studentName: "Candidate", email: "candidate@example.com",
+    phone: "03111111222", status: "terminated",
+    startedAt: "2026-11-20T09:00:00Z",
+    submittedAt: "2026-11-20T09:05:00Z",
+  });
+  assert.ok(terminated.includes('"11/20/2026 02:00PM","","","",""'));
+  assert.ok(!terminated.includes("02:05PM"));
 });
