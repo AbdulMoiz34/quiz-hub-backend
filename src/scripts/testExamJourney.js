@@ -316,6 +316,7 @@ async function run() {
     body: { ...first.startBody, email: "late-" + id + "@example.test", startKey: randomUUID() },
   });
   expectOk(lateJoin, "late join to published quiz");
+  await Attempt.deleteOne({ _id: lateJoin.data.data.id });
 
   const repeatedSubmit = await http("/api/v1/student/attempts/submit", {
     method: "POST", cookie: first.cookie,
