@@ -95,3 +95,54 @@ For load tests, each run creates a new independent quiz and slot inside
 `failures`, `databaseAttempts`, `databaseSubmissions`,
 `slotAdmissions`, and p95 latencies. If any step fails, do not
 proceed to an actual examination.
+
+
+## Diagnosing 250-user `fetch failed` errors (2026-11-20)
+
+The 250-user burst reported 232 successful journeys and 18 generic `fetch failed`
+exceptions, with a **31.6-second p95 start latency for successful requests**.
+The successful 232 attempt/submission/seat counts matched. This is **not a pass**.
+
+The original runner discarded each fetch exception's `cause`, which made it
+impossible to tell whether the error was a TCP connection timeout,
+socket reset, network abort or something else. The diagnostic runner now
+reports each failure's `step`, `causeName`, `causeCode`, `httpStatus`,
+`elapsedMs`, and aggregate `failureCounts`. It does **not** print
+cookies, passwords, student answer payloads or MongoDB URIs.
+
+Run only against a dedicated `quiz_hub_test` database, with the private
+`TEST_MONGODB_URI` configured in your local PowerShell session:
+
+```powershell
+npm run test:db
+npm run test:load
+npm run test:load -- --ramp-ms=5000
+node src/scripts/testExamJourney.js --users=300
+```
+
+Use the **burst** (`rampMs: 0`) as the actual simultaneous-entry test.
+The optional 5-second ramp is strictly diagnostic, and must not be
+reported as a 250-simultaneous-student success result.
+
+Interpret the new results:
+
+- `UND_ERR_CONNECT_TIMEOUT`: Client TCP connection timeout; examine
+  connection burst, event-loop responsiveness, OS/network and HTTP
+  acceptance. It does not by itself prove a MongoDB write error.
+- `ECONNRESET` or `UND_ERR_SOCKET`: Socket closed/reset; correlate with
+  backend termination, request errors and system resource pressure.
+- `TimeoutError`: The configured full-request timeout expired.
+- `http_status:500`: Application request failed; inspect backend logs
+  and MongoDB error codes (without exposing credentials).
+- `http_status:409`: Check seat capacity, roll uniqueness and scheduling.
+
+After each run, verify the independent **databaseAttempts**,
+**databaseSubmissions**, and **slotAdmissions** counts, and the 250
+unique-seat assertion. If any count is wrong or any journey failed,
+the run failed irrespective of the successful-request p95.
+
+**Next decision:** diagnose the exact failure category before changing
+MongoDB pool sizes, adding retries, increasing HTTP timeouts or
+restructuring the seat allocator. In particular, blindly retrying a
+request after an unclear response can lead to ambiguity; use the
+existing persisted `startKey` and idempotent API instead.

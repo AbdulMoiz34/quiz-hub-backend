@@ -13,12 +13,18 @@ import { generateAdminJwt, generateAttemptJwt } from "../utils/generateJwt.js";
 
 const usersArg = process.argv.find((arg) => arg.startsWith("--users="));
 const userCount = Number(usersArg?.split("=")[1] || 5);
+const rampArg = process.argv.find((arg) => arg.startsWith("--ramp-ms="));
+const rampMs = Number(rampArg?.split("=")[1] || 0);
 const uri = process.env.TEST_MONGODB_URI;
 const origin = "http://localhost:5173";
 const secret = randomBytes(32).toString("hex");
 
-if (!Number.isInteger(userCount) || userCount < 2 || userCount > 250) {
-  console.error("Use --users=5 through --users=250");
+if (!Number.isInteger(userCount) || userCount < 2 || userCount > 300) {
+  console.error("Use --users=5 through --users=300");
+  process.exit(1);
+}
+if (!Number.isInteger(rampMs) || rampMs < 0 || rampMs > 60_000) {
+  console.error("Use --ramp-ms=0 through --ramp-ms=60000");
   process.exit(1);
 }
 if (!uri || !/^mongodb(?:\+srv)?:\/\//.test(uri)) {
@@ -53,27 +59,45 @@ async function http(path, { method = "GET", body, cookie } = {}) {
   if (cookie) headers.Cookie = cookie;
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
-  const res = await fetch(base + path, {
-    method,
-    headers,
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    signal: AbortSignal.timeout(90_000),
-  });
-  const raw = await res.text();
-  let data;
-  try { data = JSON.parse(raw); } catch { data = raw; }
-  return {
-    status: res.status,
-    data,
-    headers: res.headers,
-    ms: Math.round(performance.now() - started),
-  };
+  try {
+    const res = await fetch(base + path, {
+      method,
+      headers,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(90_000),
+    });
+    const raw = await res.text();
+    let data;
+    try { data = JSON.parse(raw); } catch { data = raw; }
+    return {
+      status: res.status,
+      data,
+      headers: res.headers,
+      ms: Math.round(performance.now() - started),
+    };
+  } catch (cause) {
+    // Node's fetch commonly throws a generic TypeError("fetch failed").
+    // Only capture safe diagnostic fields; never log a URL or raw cause stack.
+    const error = new Error("Transport failure");
+    error.kind = "transport";
+    error.step = path.split("/").at(-1);
+    error.errorName = cause?.name || "Unknown";
+    error.causeName = cause?.cause?.name || null;
+    error.causeCode = cause?.cause?.code ||
+      cause?.cause?.errors?.[0]?.code || cause?.code || null;
+    error.elapsedMs = Math.round(performance.now() - started);
+    throw error;
+  }
 }
 
 function expectOk(response, action) {
   if (response.status !== 200) {
-    throw new Error(action + " returned HTTP " + response.status + ": " +
-      String(response.data?.message || "Unexpected response").slice(0, 150));
+    const error = new Error(action + " returned HTTP " + response.status);
+    error.kind = "http_status";
+    error.step = action.split(" ")[0];
+    error.httpStatus = response.status;
+    error.elapsedMs = response.ms;
+    throw error;
   }
 }
 
@@ -102,34 +126,45 @@ async function runStudent(i, questionId) {
     quizId: String(quiz._id), studentName: "Load Student " + (i + 1),
     rollNo, startKey,
   };
-  const start = await http("/api/v1/student/attempts/start", {
-    method: "POST", body: startBody,
-  });
-  expectOk(start, "start " + rollNo);
-  const cookie = start.headers.get("set-cookie")?.split(";")[0];
-  assert.ok(cookie?.startsWith("quiz_hub_attempt="));
-
-  const current = await http("/api/v1/student/attempts/current", { cookie });
-  expectOk(current, "resume " + rollNo);
-  assert.equal(current.data.data.questions.length, 1);
-  assert.ok(!("correctAnswer" in current.data.data.questions[0]));
-
-  const answers = [{ questionId, answer: "B", timeSpent: 5, timedOut: false }];
-  const draft = await http("/api/v1/student/attempts/draft", {
-    method: "PUT", cookie, body: { version: 1, answers },
-  });
-  expectOk(draft, "autosave " + rollNo);
-
-  const submit = await http("/api/v1/student/attempts/submit", {
-    method: "POST", cookie, body: { version: 2, answers, reason: "student" },
-  });
-  expectOk(submit, "submit " + rollNo);
-  assert.equal(submit.data.data.status, "submitted");
-
-  return {
-    rollNo, startKey, startBody, cookie, attemptId: start.data.data.id,
-    timings: { start: start.ms, current: current.ms, draft: draft.ms, submit: submit.ms },
-  };
+  // Keep failure context per student without leaking request credentials.
+  let step = "start";
+  try {
+    const start = await http("/api/v1/student/attempts/start", {
+      method: "POST", body: startBody,
+    });
+    expectOk(start, "start " + rollNo);
+    const cookie = start.headers.get("set-cookie")?.split(";")[0];
+    assert.ok(cookie?.startsWith("quiz_hub_attempt="));
+  
+    step = "current";
+    const current = await http("/api/v1/student/attempts/current", { cookie });
+    expectOk(current, "resume " + rollNo);
+    assert.equal(current.data.data.questions.length, 1);
+    assert.ok(!("correctAnswer" in current.data.data.questions[0]));
+  
+    const answers = [{ questionId, answer: "B", timeSpent: 5, timedOut: false }];
+    step = "draft";
+    const draft = await http("/api/v1/student/attempts/draft", {
+      method: "PUT", cookie, body: { version: 1, answers },
+    });
+    expectOk(draft, "autosave " + rollNo);
+  
+    step = "submit";
+    const submit = await http("/api/v1/student/attempts/submit", {
+      method: "POST", cookie, body: { version: 2, answers, reason: "student" },
+    });
+    expectOk(submit, "submit " + rollNo);
+    assert.equal(submit.data.data.status, "submitted");
+  
+    return {
+      rollNo, startKey, startBody, cookie, attemptId: start.data.data.id,
+      timings: { start: start.ms, current: current.ms, draft: draft.ms, submit: submit.ms },
+    };
+  } catch (error) {
+    error.student = i + 1;
+    error.step ||= step;
+    throw error;
+  }
 }
 
 async function run() {
@@ -170,11 +205,32 @@ async function run() {
   const questionId = String(quiz.questions[0]._id);
   const startTime = performance.now();
   const results = await Promise.allSettled(
-    Array.from({ length: userCount }, (_, i) => runStudent(i, questionId))
+    Array.from({ length: userCount }, (_, i) => (async () => {
+      // A ramped run is diagnostic, not equivalent to a simultaneous burst.
+      if (rampMs) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.round(i * rampMs / (userCount - 1))));
+      }
+      return runStudent(i, questionId);
+    })())
   );
   const good = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
   const failed = results.filter((r) => r.status === "rejected")
-    .map((r) => String(r.reason?.message || r.reason));
+    .map((r) => ({
+      student: r.reason?.student ?? null,
+      step: r.reason?.step || "unknown",
+      kind: r.reason?.kind || "error",
+      name: r.reason?.errorName || r.reason?.name || "Unknown",
+      causeName: r.reason?.causeName || null,
+      causeCode: r.reason?.causeCode || null,
+      httpStatus: r.reason?.httpStatus || null,
+      elapsedMs: r.reason?.elapsedMs ?? null,
+    }));
+  const failureCounts = {};
+  for (const failure of failed) {
+    const key = [failure.step, failure.causeCode || failure.httpStatus || failure.name].join(":");
+    failureCounts[key] = (failureCounts[key] || 0) + 1;
+  }
   const attemptCount = await Attempt.countDocuments({ quiz: quiz._id });
   const submittedCount = await Attempt.countDocuments({ quiz: quiz._id, status: "submitted" });
   const admittedCount = await Attempt.countDocuments({ slot: slot._id });
@@ -182,14 +238,18 @@ async function run() {
 
   console.info(JSON.stringify({
     requestedStudents: userCount,
+    arrivalPattern: rampMs ? "ramped" : "simultaneous-burst",
+    rampMs,
     successfulJourneys: good.length,
     failures: failed.length,
-    firstFailures: failed.slice(0, 8),
+    failureCounts,
+    firstFailures: failed.slice(0, 18),
     databaseAttempts: attemptCount,
     databaseSubmissions: submittedCount,
     slotAdmissions: admittedCount,
     totalElapsedMs: Math.round(performance.now() - startTime),
-    p95RequestLatencyMs: Object.fromEntries(
+    // Success-only latency cannot describe requests that timed out.
+    p95SuccessfulRequestLatencyMs: Object.fromEntries(
       ["start", "current", "draft", "submit"].map((key) =>
         [key, percentile(good.map((r) => r.timings[key]), 95)]
       )
