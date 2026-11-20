@@ -12,8 +12,10 @@
     "db:check": "node src/scripts/check-db.js",
     "db:seed": "node src/seeds/adminSeed.js",
     "test": "node --test",
-    "check": "node --check src/app.js && node --check src/seeds/adminSeed.js && node --check src/routes/admin/auth.routes.js && node --check src/controllers/submission.controller.js && node --check src/controllers/grading.controller.js && node --check src/utils/finalizeExpiredAttempt.js && node --check src/scripts/finalizeExpired.js && node --check src/controllers/results.controller.js && node --check src/utils/resultHelpers.js",
-    "attempts:finalize": "node src/scripts/finalizeExpired.js"
+    "check": "node --check src/app.js && node --check src/seeds/adminSeed.js && node --check src/routes/admin/auth.routes.js && node --check src/controllers/submission.controller.js && node --check src/controllers/grading.controller.js && node --check src/utils/finalizeExpiredAttempt.js && node --check src/scripts/finalizeExpired.js && node --check src/controllers/results.controller.js && node --check src/utils/resultHelpers.js && node --check src/scripts/testExamJourney.js",
+    "attempts:finalize": "node src/scripts/finalizeExpired.js",
+    "test:db": "node src/scripts/testExamJourney.js --users=5",
+    "test:load": "node src/scripts/testExamJourney.js --users=250"
   },
   "dependencies": {
     "cors": "^2.8.5",

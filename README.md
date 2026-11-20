@@ -61,3 +61,7 @@ The dashboard should load the results page and statistics independently; do not 
 4. Confirm Atlas Free cluster and AWS limits/monitoring, schedule expiry finalization and backups.
 
 Roll number alone **cannot verify identity**; open enrollment allows a first claimant to impersonate another roll number. If stronger identity protection is required, use an individual exam code or supervised verification.
+
+## Real MongoDB integration and load tests
+
+See [Phase 9 reliability checks](docs/PHASE9_TESTING.md). These tests require a separate `TEST_MONGODB_URI` and are intentionally **not run in GitHub Actions** without access to a dedicated test database. `npm run test:db` exercises five clients; `npm run test:load` sends 250 simultaneous student journeys. No test writes are allowed to the normal `quiz_hub` database.
