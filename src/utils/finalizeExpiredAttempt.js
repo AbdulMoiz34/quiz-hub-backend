@@ -35,7 +35,7 @@ export async function finalizeExpiredAttempt(attemptId) {
           ...grade,
         },
       },
-      { new: true }
+      { returnDocument: "after" }
     );
     if (finished) return finished;
   }

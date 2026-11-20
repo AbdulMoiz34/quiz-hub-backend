@@ -58,7 +58,7 @@ export const gradeManualAnswer = async (req, res) => {
       gradingVersion: version === 0 ? { $in: [null, 0] } : version,
     },
     { $set: { manualGrades: grades, ...scoring }, $inc: { gradingVersion: 1 } },
-    { new: true }
+    { returnDocument: "after" }
   ).select("score maxScore objectiveScore gradingStatus pendingReviewCount manualGrades gradingVersion");
 
   if (!updated) return errorResponse(res, 409, "Grades changed. Refresh and try again");
