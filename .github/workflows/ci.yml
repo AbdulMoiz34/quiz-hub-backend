@@ -47,6 +47,24 @@ jobs:
           node-version: '22'
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: PM2 starts the real HTTP server
+        env:
+          MONGODB_URI: mongodb://127.0.0.1:27017/quiz_hub_test
+          JWT_SECRET: ci-only-local-startup-test-secret-at-least-32-chars
+          CORS_ORIGINS: http://localhost:5173
+        run: |
+          npm install -g pm2 --no-audit --no-fund
+          pm2 start src/server.js --name quiz-hub-smoke
+          trap 'pm2 delete quiz-hub-smoke >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:5000/api/v1/ready; then
+              echo "PM2 startup verified"
+              exit 0
+            fi
+            sleep 1
+          done
+          pm2 logs quiz-hub-smoke --lines 30 --nostream
+          exit 1
       - name: Check basic HTTP + MongoDB journey
         run: npm run test:db
       - name: Check concurrent drafts, submissions, expiry and restart

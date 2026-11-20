@@ -2,11 +2,8 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { loadConfig } from "./config/env.js";
-import { connectDB, isDatabaseReady, disconnectDB } from "./config/db.js";
-import { Attempt } from "./models/attempt.model.js";
+import { isDatabaseReady } from "./config/db.js";
 import adminRoutes from "./routes/admin/index.js";
 import studentRoutes from "./routes/student/index.js";
 import { trustedOrigin } from "./middlewares/origin.middleware.js";
@@ -52,38 +49,4 @@ export function createApp(config = loadConfig()) {
   app.use((_, res) => errorResponse(res, 404, "Route not found"));
   app.use(errorHandler);
   return app;
-}
-
-// One entry point. Importing createApp for tests does not start a server.
-const launchedDirectly = process.argv[1] &&
-  import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
-
-if (launchedDirectly) {
-  const config = loadConfig();
-  try {
-    await connectDB(config.mongoUri);
-    // A database unique index is essential for the one-attempt rule.
-    await Attempt.init();
-    const server = createApp(config).listen(config.port, config.host, () => {
-      console.info(`Quiz Hub API listening at ${config.host}:${config.port}`);
-    });
-
-    let closing = false;
-    async function shutdown() {
-      if (closing) return;
-      closing = true;
-      const timeout = setTimeout(() => process.exit(1), 10_000);
-      timeout.unref();
-      server.close(async (error) => {
-        try { await disconnectDB(); } catch { process.exitCode = 1; }
-        if (error) process.exitCode = 1;
-        clearTimeout(timeout);
-      });
-    }
-    process.once("SIGTERM", shutdown);
-    process.once("SIGINT", shutdown);
-  } catch {
-    console.error("Failed to start API. Check MongoDB access and environment configuration.");
-    process.exitCode = 1;
-  }
 }
