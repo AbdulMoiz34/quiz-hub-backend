@@ -1,6 +1,7 @@
 import "dotenv/config";
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
+import bcrypt from "bcryptjs";
 import { once } from "node:events";
 import mongoose from "mongoose";
 import { createApp } from "../app.js";
@@ -8,7 +9,7 @@ import { connectDB, disconnectDB } from "../config/db.js";
 import { Quiz } from "../models/quiz.model.js";
 import { Attempt } from "../models/attempt.model.js";
 import { Admin } from "../models/admin.model.js";
-import { generateAdminJwt } from "../utils/generateJwt.js";
+
 
 // A small real-MongoDB HTTP lifecycle regression, not a throughput benchmark.
 // Never read or write the application's MONGODB_URI here.
@@ -40,9 +41,10 @@ async function run() {
   assert.ok(!indexes.some((index) => index.key.rollNo === 1 || index.key.seatNumber === 1),
     "Obsolete attempt indexes detected. Run the documented migration on quiz_hub_test.");
 
+  const adminPassword = "test-password-" + randomUUID();
   admin = await Admin.create({
     email: "lifecycle-" + id + "@example.invalid",
-    passwordHash: "unused-by-this-test",
+    passwordHash: await bcrypt.hash(adminPassword, 8),
   });
   server = createApp({
     allowedOrigins: [origin], jwtSecret: secret,
@@ -52,7 +54,7 @@ async function run() {
   await once(server, "listening");
 
   const base = "http://127.0.0.1:" + server.address().port;
-  const adminCookie = "quiz_hub_admin=" + generateAdminJwt(admin, secret);
+  let adminCookie;
 
   async function http(path, { method = "GET", body, cookie } = {}) {
     const response = await fetch(base + "/api/v1/" + path, {
@@ -71,6 +73,23 @@ async function run() {
       cookie: response.headers.get("set-cookie")?.split(";")[0],
     };
   }
+
+  // Exercise actual admin password validation, signed cookie and /me.
+  const failedLogin = await http("admin/auth/login", {
+    method: "POST", body: { email: admin.email, password: "incorrect-password" },
+  });
+  expectStatus(failedLogin, 401, "invalid admin password");
+  const login = await http("admin/auth/login", {
+    method: "POST", body: { email: admin.email, password: adminPassword },
+  });
+  const profile = expectStatus(login, 200, "real admin password login");
+  assert.equal(profile.email, admin.email);
+  adminCookie = login.cookie;
+  assert.ok(adminCookie?.startsWith("quiz_hub_admin="), "Missing admin session cookie");
+  const me = expectStatus(await http("admin/auth/me", {
+    cookie: adminCookie,
+  }), 200, "admin /me");
+  assert.equal(me.email, admin.email);
 
   // Admin creates a draft and publishes it via authenticated HTTP endpoints.
   // No direct model insert for quiz fixtures: this tests real admin routing and Joi.
@@ -313,10 +332,17 @@ async function run() {
   expectStatus(await remove(expiry.data.id), 200, "admin deletes expired submission");
 
   assert.equal(await Attempt.countDocuments({ quiz: quiz._id }), 0);
+  expectStatus(await http("admin/auth/logout", {
+    method: "POST", cookie: adminCookie,
+  }), 200, "admin logout");
+  expectStatus(await http("admin/auth/me", {
+    cookie: adminCookie,
+  }), 401, "revoked admin JWT after logout");
   console.info(JSON.stringify({
     test: "Real MongoDB attempt lifecycle",
     isolatedDatabase: "quiz_hub_test",
     checksPassed: [
+      "admin password login/logout and cookie revocation",
       "admin creation and publish", "one-hour deadline", "draft recovery",
       "admin results, CSV and manual grading", "idempotent submission",
       "concurrent email uniqueness", "atomic violation retries and termination",
