@@ -6,6 +6,7 @@ import { createApp } from "../src/app.js";
 async function withServer(isDbReady, callback) {
   const app = createApp({
     allowedOrigins: ["http://localhost:5173"],
+    jwtSecret: "only-for-tests-this-is-32-characters-long-123456789",
     isDbReady,
   });
   const server = app.listen(0, "127.0.0.1");

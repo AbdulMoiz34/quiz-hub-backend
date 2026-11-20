@@ -7,7 +7,7 @@ async function start() {
   await connectDatabase(config.mongoUri);
   console.info("MongoDB connected");
 
-  const app = createApp({ allowedOrigins: config.allowedOrigins });
+  const app = createApp(config);
   const server = app.listen(config.port, config.host, () => {
     console.info("API listening on " + config.host + ":" + config.port);
   });
