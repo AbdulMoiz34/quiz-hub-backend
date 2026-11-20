@@ -6,6 +6,7 @@ const slotSchema = new mongoose.Schema({
   startsAt: { type: Date, required: true },
   endsAt: { type: Date, required: true },
   capacity: { type: Number, default: 250, min: 1, max: 500 },
+  admittedCount: { type: Number, default: 0, min: 0 },
   isActive: { type: Boolean, default: true },
 }, { timestamps: true });
 

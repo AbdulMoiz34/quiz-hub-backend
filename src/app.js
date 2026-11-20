@@ -6,8 +6,11 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadConfig } from "./config/env.js";
 import { connectDB, isDatabaseReady, disconnectDB } from "./config/db.js";
+import { Attempt } from "./models/attempt.model.js";
+import { Slot } from "./models/slot.model.js";
 import adminRoutes from "./routes/admin/index.js";
-import { adminOrigin } from "./middlewares/adminOrigin.middleware.js";
+import studentRoutes from "./routes/student/index.js";
+import { trustedOrigin } from "./middlewares/origin.middleware.js";
 import { errorHandler } from "./middlewares/error.middleware.js";
 import { errorResponse } from "./utils/responseHandler.js";
 
@@ -42,7 +45,8 @@ export function createApp(config = loadConfig()) {
     });
   });
 
-  app.use("/api/v1/admin", adminOrigin(config.allowedOrigins), adminRoutes(config));
+  app.use("/api/v1/admin", trustedOrigin(config.allowedOrigins), adminRoutes(config));
+  app.use("/api/v1/student", trustedOrigin(config.allowedOrigins), studentRoutes(config));
   app.use((_, res) => errorResponse(res, 404, "Route not found"));
   app.use(errorHandler);
   return app;
@@ -56,6 +60,8 @@ if (launchedDirectly) {
   const config = loadConfig();
   try {
     await connectDB(config.mongoUri);
+    // A database unique index is essential for the one-attempt rule.
+    await Promise.all([Attempt.init(), Slot.init()]);
     const server = createApp(config).listen(config.port, config.host, () => {
       console.info(`Quiz Hub API listening at ${config.host}:${config.port}`);
     });
