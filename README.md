@@ -20,7 +20,25 @@ Node.js 22+ · Express 5 · MongoDB Atlas. Simple modular monolith without Redis
 4. Deploy the new backend and compatible frontend together (the old frontend roll/slot API payload will be rejected). The only startup entry point is `src/server.js`: use `npm run dev` or `npm start`. Verify `npm test` and `npm run db:check`.
 5. Configure a periodic one-shot `npm run attempts:finalize` to finalize expired unsent attempts from their last persisted drafts. No background worker is installed.
 
-Do not deploy the new attempt API while the old `quiz_1_rollNo_1` unique index still exists: new email-only inserts can collide against that obsolete index.
+**Critical production release gate:** `npm run db:migrate:check` must report
+`readyForNewStudents: true` before opening registration. A leftover
+`quiz_1_rollNo_1` unique index can reject **every new email-based candidate**
+with `Unable to reserve attempt`. MongoDB treats missing `rollNo` values as
+null. A green load test on a clean test database does **not** detect old indexes
+remaining on the production Atlas database.
+
+The API now refuses startup if a conflicting unique attempt index exists or if
+the required partial `{quiz:1,email:1}` unique index is missing. This prevents
+a false "ready" state while real candidates cannot start.
+
+If the read-only check reports unsafe indexes, **pause new registrations**.
+Finish any active legacy attempts and take a **verified database backup**. Then
+run `npm run db:migrate -- --expect-db=YOUR_EXACT_DATABASE_NAME` on EC2
+with its production environment; the migration creates/verifies the email
+constraint before dropping only the known obsolete indexes and refuses unknown
+unique constraints. Rerun `npm run db:migrate:check` and confirm
+`readyForNewStudents: true` before restarting PM2. Do not delete attempts or
+run test scripts against production. Never drop unknown unique indexes blindly.
 
 ## Run on EC2 with PM2 (no CI/CD)
 
