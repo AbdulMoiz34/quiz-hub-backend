@@ -1,38 +1,47 @@
 # Quiz Hub Backend
 
-Node.js 22 + Express + MongoDB Atlas — one modular monolith. Code style follows the existing Rakhshinda Art backend: a single `src/app.js`, explicit routes, small controllers, Joi validations, Mongoose models, seed scripts and minimal shared helpers.
+Simple Node.js + Express + MongoDB Atlas examination API. Code style follows Rakhshinda Art: **one `src/app.js` entry point**, small controllers, centralized models, validation and route files.
 
-**Status:** Foundation, single-admin authentication and admin-side quiz creation. **Not ready for a real exam** until student eligibility, exam attempts, autosave, scoring, results and 250-user load testing exist.
+**Current status:** Backend foundation, admin auth, admin quiz/question management and admin **exam slot scheduling**. Not ready for a live exam: student eligibility, secure attempts, autosave, grading, result pagination and concurrency tests are still needed.
 
-## Local setup
+## Setup
 
-1. `npm install` (commit generated `package-lock.json` before production).
-2. `cp .env.example .env` (on PowerShell: `Copy-Item .env.example .env`).
-3. Configure MongoDB Atlas connection, exact CORS origins, a 32+ character random `JWT_SECRET` and private admin credentials. Rotate any previously shared database password; URL-encode password special characters.
-4. `npm run db:check` then `npm run db:seed` (safe to rerun, does not overwrite existing admin).
-5. `npm run dev`, `npm run check`, `npm test`.
+1. Node.js 22+, `npm install`.
+2. Copy `.env.example` to `.env`, set `MONGODB_URI`, `CORS_ORIGINS`, `JWT_SECRET`, `ADMIN_EMAIL` and `ADMIN_PASSWORD`.
+3. Rotate any previously shared MongoDB password. URL-encode URI password special characters and configure Atlas IP access.
+4. `npm run db:check`, `npm run db:seed`, `npm run dev`, `npm test`.
+5. Commit the generated `package-lock.json` before a production deployment.
 
-## Endpoints
+## Admin API (requires secure admin session except login)
 
-| Method | Path | Access |
+| Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/v1/health` | Public |
-| GET | `/api/v1/ready` | Public |
-| POST | `/api/v1/admin/auth/login` | Admin password |
-| GET | `/api/v1/admin/auth/me` | Admin |
-| POST | `/api/v1/admin/auth/logout` | Admin |
-| GET | `/api/v1/admin/quizzes` | Admin; summaries only |
-| POST | `/api/v1/admin/quizzes` | Admin |
-| GET | `/api/v1/admin/quizzes/:id` | Admin; full question bank |
-| PUT | `/api/v1/admin/quizzes/:id` | Admin; unpublished only |
-| PATCH | `/api/v1/admin/quizzes/:id/publish` | Admin; only `{ "isPublished": true }` |
+| POST | `/api/v1/admin/auth/login` | Admin login |
+| GET | `/api/v1/admin/auth/me` | Current admin |
+| POST | `/api/v1/admin/auth/logout` | Logout |
+| GET | `/api/v1/admin/quizzes` | Summaries (no answer keys) |
+| POST | `/api/v1/admin/quizzes` | Create |
+| GET | `/api/v1/admin/quizzes/:id` | Full private quiz |
+| PUT | `/api/v1/admin/quizzes/:id` | Edit only before publishing |
+| PATCH | `/api/v1/admin/quizzes/:id/publish` | Publish |
+| GET | `/api/v1/admin/slots?quizId=...` | Slots for a quiz |
+| POST | `/api/v1/admin/slots` | Schedule new slot |
+| PATCH | `/api/v1/admin/slots/:id` | Edit future slot |
 
-All admin responses use `{ success, message, data }`. Admin cookie is HttpOnly; browser requests use `credentials: "include"`. Admin POST/PUT/PATCH requests require an allowed `Origin`. For cross-site Vercel/AWS, HTTPS + `COOKIE_SAME_SITE=none` in production may be required; same-site subdomains with `lax` are preferable.
+Create slot example:
 
-## Security and scope
+```json
+{
+  "quizId": "507f1f77bcf86cd799439011",
+  "name": "Slot 1",
+  "startsAt": "2026-11-21T09:00:00+05:00",
+  "endsAt": "2026-11-21T10:00:00+05:00",
+  "capacity": 250
+}
+```
 
-Quiz model embeds questions and their correct answers in one MongoDB document for simplicity; **only admin-authenticated routes expose them**. Student question delivery must be added later through a verified attempt API which explicitly removes answer keys and private coding test cases. No public question bank API has been added.
+Dates are stored in UTC in MongoDB. Include timezone offsets in requests (Pakistan: `+05:00`).
 
-Editing is blocked after publishing. Publishing currently activates a quiz for future student/session flows; closing or unpublishing during active attempts needs rules in the upcoming attempt module. No grading or sandboxed code execution is implemented.
+Slots cannot overlap for the same quiz, and cannot be edited after starting. **Capacity is metadata for now; it will be enforced by the attempt module.** Scheduling alone does not verify student identity. Student login/signup is not planned, but the secure student-entry method and roster policy still need agreement before attempt issuance.
 
-No extra packages, Redis, sockets, queues or microservices.
+No new dependencies, Redis, workers or microservices. AWS and frontend migration are deferred.
