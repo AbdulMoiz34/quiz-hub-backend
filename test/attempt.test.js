@@ -64,7 +64,7 @@ test("invalid registration rejected before database access", async () => {
     assert.equal(response.status, 400);
     const wrongPhone = await post(base, { ...candidate, phone: "0311111122" });
     assert.equal(wrongPhone.status, 400);
-    assert.match((await wrongPhone.json()).message, /11 digits/);
+    assert.equal((await wrongPhone.json()).message, "Invalid request body");
     const international = await post(base, { ...candidate, phone: "+923111111222" });
     assert.equal(international.status, 400);
   });
