@@ -41,7 +41,8 @@ Each integration test creates an isolated published quiz and temporary attempts,
 
 ## Release checklist
 
-- [ ] All active old slot attempts finished; backups and correct MongoDB index migration completed
+- [ ] Run `npm run db:migrate:check` read-only; verify the target DB, zero active legacy attempts, and obsolete indexes
+- [ ] Confirm a restorable backup; then run `npm run db:migrate -- --expect-db=YOUR_DATABASE_NAME` during maintenance, and recheck the indexes
 - [ ] `npm run check` and `npm test` pass
 - [ ] `npm run test:db`, `npm run test:races` and `npm run test:journey` pass with an isolated real MongoDB
 - [ ] 200, 250, and 300 client bursts pass repeatedly, no lost answers or duplicates

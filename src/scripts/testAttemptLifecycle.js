@@ -34,18 +34,12 @@ async function run() {
     throw new Error("REFUSED: database name must be exactly quiz_hub_test");
   }
   await Promise.all([Quiz.init(), Attempt.init(), Admin.init()]);
+  const indexes = await Attempt.collection.indexes();
+  const emailIndex = indexes.find((index) => index.key.quiz === 1 && index.key.email === 1);
+  assert.ok(emailIndex?.unique, "Missing unique {quiz,email} index");
+  assert.ok(!indexes.some((index) => index.key.rollNo === 1 || index.key.seatNumber === 1),
+    "Obsolete attempt indexes detected. Run the documented migration on quiz_hub_test.");
 
-  quiz = await Quiz.create({
-    title: "Lifecycle Integration " + id,
-    durationMinutes: 60,
-    maxViolations: 3,
-    isPublished: true,
-    questionCount: 1,
-    questions: [{
-      type: "mcq", prompt: "Select B",
-      options: ["A", "B"], correctAnswer: "B", points: 1,
-    }],
-  });
   admin = await Admin.create({
     email: "lifecycle-" + id + "@example.invalid",
     passwordHash: "unused-by-this-test",
@@ -58,11 +52,7 @@ async function run() {
   await once(server, "listening");
 
   const base = "http://127.0.0.1:" + server.address().port;
-  const quizId = String(quiz._id);
-  const questionId = String(quiz.questions[0]._id);
   const adminCookie = "quiz_hub_admin=" + generateAdminJwt(admin, secret);
-  const correctAnswers = [{ questionId, answer: "B" }];
-  const wrongAnswers = [{ questionId, answer: "A" }];
 
   async function http(path, { method = "GET", body, cookie } = {}) {
     const response = await fetch(base + "/api/v1/" + path, {
@@ -81,6 +71,45 @@ async function run() {
       cookie: response.headers.get("set-cookie")?.split(";")[0],
     };
   }
+
+  // Admin creates a draft and publishes it via authenticated HTTP endpoints.
+  // No direct model insert for quiz fixtures: this tests real admin routing and Joi.
+  const draftBody = {
+    title: "Lifecycle Integration " + id,
+    durationMinutes: 60,
+    maxViolations: 3,
+    questions: [
+      { type: "mcq", prompt: "Select B", options: ["A", "B"], correctAnswer: "B", points: 1 },
+      { type: "short_text", prompt: "Explain your choice", points: 2 },
+    ],
+  };
+  const created = expectStatus(await http("admin/quizzes", {
+    method: "POST", cookie: adminCookie, body: draftBody,
+  }), 201, "admin creates quiz");
+  const quizId = created.id;
+  quiz = await Quiz.findById(quizId);
+  assert.ok(quiz);
+  const questionId = String(quiz.questions[0]._id);
+  const manualQuestionId = String(quiz.questions[1]._id);
+  const correctAnswers = [{ questionId, answer: "B" }];
+  const wrongAnswers = [{ questionId, answer: "A" }];
+
+  const unpublished = expectStatus(await http("student/quizzes"), 200, "published quizzes");
+  assert.ok(!unpublished.some((entry) => entry.id === quizId),
+    "Draft quiz must never be listed publicly");
+  expectStatus(await http("admin/quizzes/" + quizId), 401, "quiz detail requires admin");
+  const privateQuiz = expectStatus(await http("admin/quizzes/" + quizId, {
+    cookie: adminCookie,
+  }), 200, "admin can view quiz questions");
+  assert.equal(privateQuiz.questions[0].correctAnswer, "B");
+  const published = expectStatus(await http("admin/quizzes/" + quizId + "/publish", {
+    method: "PATCH", cookie: adminCookie, body: { isPublished: true },
+  }), 200, "admin publishes quiz");
+  assert.equal(published.isPublished, true);
+  const visible = expectStatus(await http("student/quizzes"), 200, "published quizzes available");
+  assert.ok(visible.some((entry) => entry.id === quizId && entry.durationMinutes === 60));
+  assert.ok(!visible.some((entry) => entry.correctAnswer != null),
+    "Public quiz listing must not include answer keys");
 
   function details(label, startKey = randomUUID()) {
     return {
@@ -108,7 +137,7 @@ async function run() {
   }), 200, "resume started exam");
   assert.equal(current.attempt.id, first.data.id);
   assert.equal(current.quiz.durationMinutes, 60);
-  assert.equal(current.questions.length, 1);
+  assert.equal(current.questions.length, 2);
   assert.ok(!("correctAnswer" in current.questions[0]));
   assert.ok(!("timeSeconds" in current.questions[0]));
   assert.equal(current.draft.version, 0);
@@ -145,6 +174,32 @@ async function run() {
   assert.equal(repeat.attemptId, first.data.id);
   assert.equal((await Attempt.findById(first.data.id).lean()).answers[0].answer, "B");
 
+  // Admin views list, statistics, detailed results and CSV after submission.
+  const statistics = expectStatus(await http("admin/results/stats?quizId=" + quizId, {
+    cookie: adminCookie,
+  }), 200, "admin results statistics");
+  assert.equal(statistics.totalAttempts, 1);
+  assert.equal(statistics.submitted, 1);
+  const page = expectStatus(await http("admin/results?quizId=" + quizId, {
+    cookie: adminCookie,
+  }), 200, "admin lists quiz results");
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0].email, firstBody.email);
+  assert.ok(!("answers" in page.items[0]));
+  expectStatus(await http("admin/attempts/" + first.data.id), 401, "attempt review requires admin");
+  const reviewed = expectStatus(await http("admin/attempts/" + first.data.id, {
+    cookie: adminCookie,
+  }), 200, "admin reviews attempt");
+  assert.equal(reviewed.answers[0].answer, "B");
+  const csvResponse = await fetch(base + "/api/v1/admin/results/export?quizId=" + quizId, {
+    headers: { Cookie: adminCookie, Origin: origin },
+    signal: AbortSignal.timeout(30_000),
+  });
+  assert.equal(csvResponse.status, 200);
+  const csv = await csvResponse.text();
+  assert.ok(csv.includes(firstBody.email));
+  assert.ok(!csv.includes("startKeyHash"));
+
   expectStatus(await http("admin/attempts/" + first.data.id, {
     method: "DELETE",
   }), 401, "unauthorized admin delete");
@@ -155,6 +210,27 @@ async function run() {
   const reset = await start({ ...firstBody, startKey: randomUUID() });
   assert.notEqual(reset.data.id, first.data.id);
   expectStatus(await remove(reset.data.id), 200, "admin deletes active attempt");
+
+  // Submitted short answers remain pending until the admin awards manual marks.
+  const manual = await start(details("manual"));
+  const allAnswers = [...correctAnswers, { questionId: manualQuestionId, answer: "Because B is correct." }];
+  const manualReceipt = expectStatus(await http("student/attempts/submit", {
+    method: "POST", cookie: manual.cookie,
+    body: { version: 1, answers: allAnswers, reason: "student" },
+  }), 200, "manual review submission");
+  assert.equal(manualReceipt.status, "submitted");
+  const toReview = await Attempt.findById(manual.data.id).lean();
+  assert.equal(toReview.pendingReviewCount, 1);
+  assert.equal(toReview.gradingStatus, "pending_review");
+  assert.equal(toReview.score, 1);
+  const grade = expectStatus(await http("admin/attempts/" + manual.data.id + "/grade", {
+    method: "PATCH", cookie: adminCookie,
+    body: { questionId: manualQuestionId, pointsAwarded: 2 },
+  }), 200, "admin manually grades short answer");
+  assert.equal(grade.score, 3);
+  assert.equal(grade.gradingStatus, "graded");
+  assert.equal(grade.pendingReviewCount, 0);
+  expectStatus(await remove(manual.data.id), 200, "admin deletes graded attempt");
 
   // Concurrent starts for the same normalized email must reserve exactly one.
   const contender = details("race");
@@ -241,7 +317,8 @@ async function run() {
     test: "Real MongoDB attempt lifecycle",
     isolatedDatabase: "quiz_hub_test",
     checksPassed: [
-      "one-hour deadline", "draft recovery", "idempotent submission",
+      "admin creation and publish", "one-hour deadline", "draft recovery",
+      "admin results, CSV and manual grading", "idempotent submission",
       "concurrent email uniqueness", "atomic violation retries and termination",
       "post-termination write protection", "admin delete and reattempt",
       "deleted JWT revocation", "server-owned expiry finalization",
