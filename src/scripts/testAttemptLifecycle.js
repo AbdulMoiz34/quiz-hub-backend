@@ -108,10 +108,10 @@ async function run() {
   const quizId = created.id;
   quiz = await Quiz.findById(quizId);
   assert.ok(quiz);
-  const questionId = String(quiz.questions[0]._id);
-  const manualQuestionId = String(quiz.questions[1]._id);
-  const correctAnswers = [{ questionId, answer: "B" }];
-  const wrongAnswers = [{ questionId, answer: "A" }];
+  let questionId = String(quiz.questions[0]._id);
+  let manualQuestionId = String(quiz.questions[1]._id);
+  let correctAnswers = [{ questionId, answer: "B" }];
+  let wrongAnswers = [{ questionId, answer: "A" }];
 
   const unpublished = expectStatus(await http("student/quizzes"), 200, "published quizzes");
   assert.ok(!unpublished.some((entry) => entry.id === quizId),
@@ -145,6 +145,13 @@ async function run() {
     body: { ...draftBody, title: draftBody.title + " revised" },
   }), 200, "admin edits unpublished quiz before student attempts");
   assert.equal(updatedDraft.id, quizId);
+  // Saving a full draft replaces question subdocuments. Load their final IDs
+  // before simulating student answer persistence and server grading.
+  quiz = await Quiz.findById(quizId);
+  questionId = String(quiz.questions[0]._id);
+  manualQuestionId = String(quiz.questions[1]._id);
+  correctAnswers = [{ questionId, answer: "B" }];
+  wrongAnswers = [{ questionId, answer: "A" }];
   expectStatus(await http("admin/quizzes/" + quizId + "/publish", {
     method: "PATCH", cookie: adminCookie, body: { isPublished: true },
   }), 200, "admin republishes quiz");
