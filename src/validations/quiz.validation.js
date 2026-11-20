@@ -7,7 +7,6 @@ const questionSchema = Joi.object({
   options: Joi.array().items(Joi.string().trim().min(1).max(1000)).max(8).default([]),
   correctAnswer: Joi.string().trim().allow("").default(""),
   points: Joi.number().integer().min(1).max(100).default(1),
-  timeSeconds: Joi.number().integer().min(10).max(300).default(45),
   starterCode: Joi.string().allow("").default(""),
   language: Joi.string().valid("javascript").default("javascript"),
   testCases: Joi.array().items(Joi.object({
@@ -34,7 +33,6 @@ export const quizSchema = Joi.object({
   title: Joi.string().trim().min(2).max(150).required(),
   description: Joi.string().trim().allow("").max(3000).default(""),
   durationMinutes: Joi.number().integer().min(1).max(300).default(45),
-  questionTimeSeconds: Joi.number().integer().min(10).max(300).default(45),
   maxViolations: Joi.number().integer().min(1).max(10).default(3),
   randomizeQuestions: Joi.boolean().default(false),
   randomizeOptions: Joi.boolean().default(false),

@@ -19,7 +19,6 @@ export function studentQuestions(quiz, attemptId) {
     code: question.code || "",
     options: [...(question.options || [])],
     points: question.points,
-    timeSeconds: question.timeSeconds,
     starterCode: question.starterCode || "",
     language: question.language || "javascript",
   }));

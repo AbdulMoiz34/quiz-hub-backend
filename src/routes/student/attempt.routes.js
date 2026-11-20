@@ -2,10 +2,11 @@ import { Router } from "express";
 import { rateLimit } from "express-rate-limit";
 import { attemptAuth } from "../../middlewares/auth.middleware.js";
 import { validateReq } from "../../middlewares/validateReq.middleware.js";
-import { startAttemptSchema } from "../../validations/attempt.validation.js";
+import { startAttemptSchema, violationSchema } from "../../validations/attempt.validation.js";
 import { draftSchema, submissionSchema } from "../../validations/submission.validation.js";
 import { startAttempt, currentAttempt } from "../../controllers/attempt.controller.js";
 import { saveDraft, submitAttempt } from "../../controllers/submission.controller.js";
+import { reportViolation } from "../../controllers/violation.controller.js";
 import { errorResponse } from "../../utils/responseHandler.js";
 
 // Optional during transition: new student UI always sends this identifier.
@@ -35,6 +36,7 @@ export default function attemptRoutes(config) {
   router.get("/current", authenticate, currentAttempt);
   router.put("/draft", authenticate, checkExpectedAttempt, validateReq(draftSchema), saveDraft);
   router.post("/submit", authenticate, checkExpectedAttempt, validateReq(submissionSchema), submitAttempt);
+  router.post("/violations", authenticate, checkExpectedAttempt, validateReq(violationSchema), reportViolation);
 
   return router;
 }

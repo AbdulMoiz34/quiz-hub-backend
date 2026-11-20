@@ -13,10 +13,9 @@ const secret = "unique-testing-secret-over-32-characters-and-more";
 const quizId = new mongoose.Types.ObjectId();
 const questionId = new mongoose.Types.ObjectId();
 const attemptId = new mongoose.Types.ObjectId();
-const slotId = new mongoose.Types.ObjectId();
 
 const answers = [{
-  questionId: String(questionId), answer: "B", timeSpent: 10, timedOut: false,
+  questionId: String(questionId), answer: "B",
 }];
 
 async function withServer(callback) {
@@ -62,8 +61,8 @@ async function withFakeDatabase(callback, expired = false) {
 
   let writes = 0;
   let state = {
-    _id: attemptId, quiz: quizId, slot: slotId,
-    studentName: "Ahmed Ali", rollNo: "00123",
+    _id: attemptId, quiz: quizId,
+    studentName: "Ahmed Ali", email: "ahmed@example.test", phone: "+923001234567",
     status: "started", answers: [], draftVersion: 0,
     startedAt: new Date(Date.now() - 20_000),
     expiresAt: new Date(Date.now() + (expired ? -1000 : 60_000)),
@@ -75,7 +74,7 @@ async function withFakeDatabase(callback, expired = false) {
     randomizeQuestions: false, randomizeOptions: false,
     questions: [{
       _id: questionId, type: "mcq", prompt: "Pick an answer",
-      options: ["A", "B"], correctAnswer: "B", points: 1, timeSeconds: 30,
+      options: ["A", "B"], correctAnswer: "B", points: 1,
     }],
   });
   Attempt.findOneAndUpdate = (filter, update) => {
@@ -111,7 +110,7 @@ async function withFakeDatabase(callback, expired = false) {
   }
 }
 
-test("draft and submission validation accept numeric rolls' unrelated answer IDs as hex", () => {
+test("draft and submission validation accept question IDs as hex", () => {
   const { error } = draftSchema.validate({ version: 1, answers });
   assert.equal(error, undefined);
 });

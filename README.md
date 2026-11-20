@@ -1,93 +1,63 @@
 # Quiz Hub Backend
 
-Node.js 22 + Express 5 + MongoDB Atlas, simple modular monolith. One `src/app.js` entry point, Painting-style routes/controllers/models/validators/utils, and no Redis or new packages.
+Node.js 22+ · Express 5 · MongoDB Atlas. Simple modular monolith without Redis, slots, or per-question timers.
 
-## Current modules
+## Product behavior
 
-- Single seeded admin authentication
-- Quiz/questions management
-- Six-slot scheduling
-- Student exam entry (name + numeric-only roll number), attempt session and refresh recovery
-- Versioned answer autosave and idempotent final submission
-- Trusted MCQ/True-False scoring, manual review for short-text/coding
-- **Admin results listing, database cursor pagination, filters, statistics and CSV export**
+- Admin creates quizzes and publishes them. Published quizzes are available at any time; no schedules or capacity seats.
+- Student enters full name, email and phone, selects a quiz, then starts. One attempt **per normalized email per quiz**, enforced by MongoDB's unique index. No roll numbers or account signup.
+- A single quiz-wide deadline starts when the attempt begins (`durationMinutes`; e.g. 60 minutes). The server enforces `expiresAt`. Question time limits do not exist.
+- Student answers are versioned and autosaved. Refresh or reconnect can restore the current attempt with its signed cookie. Final submission is idempotent and server-graded for MCQ/True-False; coding/short text is reviewed by admin.
+- The browser may report `tab_hidden`, `window_blur`, and `fullscreen_exit` through an authenticated endpoint. The server counts unique event IDs and terminates the attempt at `maxViolations` (default 3). These are **client-reported events**, not proof of cheating; a modified browser can suppress them.
+- Admin can **permanently delete an attempt**, including submitted/expired/terminated ones, to release the email key so the candidate can reattempt. This destroys its answers and result and immediately invalidates the old attempt cookie.
 
-**Not production ready:** The existing frontend still uses Firebase. Real Atlas integration tests, load tests with 250 concurrent students, production expiry scheduling, and deployment verification have not been completed. A successful GitHub Actions run is not evidence of a load-tested backend.
+## Setup and migration
 
-## Local setup
+1. Install Node.js 22+, `npm install`; set up `.env` from `.env.example` (MongoDB URI, exact CORS origins, JWT secret and admin credentials). Rotate any exposed Atlas secrets.
+2. **Before switching an existing database to this release**, finish all active slot-based attempts and take a verified MongoDB backup. Legacy attempts without email are preserved for historical access.
+3. Run `npm run db:migrate` once with the production environment. It first creates the unique `{quiz:1,email:1}` partial index, then drops the obsolete roll/seat indexes. It **refuses** if any old attempt lacking email is currently active. The old `slots` collection is left in MongoDB, untouched.
+4. Deploy the new backend and compatible frontend together (the old frontend roll/slot API payload will be rejected). Start using `npm run dev` or `npm start`; verify `npm test` and `npm run db:check`.
+5. Configure a periodic one-shot `npm run attempts:finalize` to finalize expired unsent attempts from their last persisted drafts. No background worker is installed.
 
-1. Install Node.js 22+ and run `npm install`. Commit the generated `package-lock.json` before deployment.
-2. Copy `.env.example` to `.env`, set `MONGODB_URI`, `CORS_ORIGINS`, random `JWT_SECRET` and private admin credentials.
-3. Rotate previously shared Atlas credentials. URL-encode special characters in URI passwords and allowlist only the necessary IP addresses.
-4. Run `npm run db:check`, `npm run db:seed`, `npm run dev`, `npm test`.
-5. Optional one-shot expiry cleanup: `npm run attempts:finalize` (not yet scheduled).
+Do not deploy the new attempt API while the old `quiz_1_rollNo_1` unique index still exists: new email-only inserts can collide against that obsolete index.
 
-## Admin results
+## Student API
 
-Requires admin authentication cookie (and browser credentials).
+Prefix: `/api/v1/student`. Credentials/cookies are required for existing attempts; write calls must originate from an allowed origin.
 
-`GET /api/v1/admin/results?quizId=<24-character MongoDB ID>&limit=25`
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /quizzes` | List published quizzes |
+| `POST /attempts/start` | Body: `quizId, studentName, email, phone, startKey` |
+| `GET /attempts/current` | Load current questions, deadline, server time, saved draft, violation count |
+| `PUT /attempts/draft` | Versioned answer snapshot: `{ version, answers: [{questionId, answer}] }` |
+| `POST /attempts/submit` | Final answer snapshot: `{ version, answers, reason: "student" }` |
+| `POST /attempts/violations` | Body: `{ eventId: UUIDv4, type: "tab_hidden" | "window_blur" | "fullscreen_exit" }` |
 
-Response:
+The browser must generate and persist one UUIDv4 `startKey` for retrying the same start request, and a new UUIDv4 `eventId` for each observable violation. Retries of the same violation use the **same** eventId. Reusing an email with a different startKey returns HTTP 409, even if the prior attempt was completed. `X-Expected-Attempt-Id` on draft/submit/violation writes helps prevent a stale tab using a different attempt cookie.
 
-```json
-{
-  "success": true,
-  "message": "Results fetched",
-  "data": {
-    "items": [],
-    "hasMore": false,
-    "nextCursor": null
-  }
-}
-```
+When the timer expires, late changes are rejected and only saved answers are eligible for expiry finalization. If violation threshold is reached, status becomes `terminated`, questions and writes are blocked, and the attempt is not scored as a normal submission.
 
-For the next page, pass `cursor=<nextCursor>` with the same quiz and filters. `limit` defaults to 25, max 100. Ordering is **attempt creation order** (`_id` descending) so a new grade/submission cannot move records between pages. The list never fetches private answer arrays, question keys or internal session hashes.
+## Admin API
 
-Optional filters: `slotId` (24-digit hexadecimal ObjectId), `status` (`started|submitted|terminated`), `gradingStatus` (`ungraded|pending_review|graded`), `rollNo` (exact 1–25 ASCII digits; leading zeros preserved). Filters operate in MongoDB, not locally on one page. Use a new pagination cursor when filters change.
+All endpoints use the admin cookie.
 
-- `GET /api/v1/admin/results/stats?quizId=<id>` — counts **all attempts**, separating active, expired-but-not-finalized, submitted, terminated, graded and pending manual reviews. Optional `slotId`.
-- `GET /api/v1/admin/results/export?quizId=<id>` — CSV of **all filtered attempts** regardless of the current page. Supports `slotId`, `status`, `gradingStatus`, `rollNo`. Streaming cursor with batch size 100 limits application memory. CSV escapes quotes and protects user-entered cells from spreadsheet formulas.
-- `GET /api/v1/admin/attempts/:id` — full review of an individual attempt, including answers.
-- `PATCH /api/v1/admin/attempts/:id/grade` — manual grading of coding/short-text answers.
+- `POST /api/v1/admin/quizzes` · `GET /api/v1/admin/quizzes` · `PUT /api/v1/admin/quizzes/:id` · `PATCH /api/v1/admin/quizzes/:id/publish`: manage/publish quiz.
+- `GET /api/v1/admin/results?quizId=<id>&limit=25`: paginated results, cursor pagination. Optional exact `email`, `status`, `gradingStatus` filters.
+- `GET /api/v1/admin/results/stats?quizId=<id>`: live attempt counts.
+- `GET /api/v1/admin/results/export?quizId=<id>`: streamed CSV of all matching results, spreadsheet-formula safe.
+- `GET /api/v1/admin/attempts/:id`: attempt details including violations and saved answers.
+- `PATCH /api/v1/admin/attempts/:id/grade`: manual grades on submitted short-text/coding responses.
+- `DELETE /api/v1/admin/attempts/:id`: **destructive** reset; requires a confirmation UI. Allows same email to start again.
 
-The dashboard should load the results page and statistics independently; do not compute total counts from a page of 25 rows or fetch all 1,500 answers for listing. CSV is admin-only, with `Cache-Control: no-store`.
+No quiz deletion or separate student/profile collection has been introduced.
 
-## Remaining release work
+## Testing and release gate
 
-1. Test real MongoDB transactions, unique indexes and failure/retry scenarios.
-2. Connect and migrate frontend from Firebase, including numeric-only roll validation, autosave and admin pages.
-3. Test 250 simultaneous starts, autosaves, final submits and result lookups.
-4. Confirm Atlas Free cluster and AWS limits/monitoring, schedule expiry finalization and backups.
+- `npm test`: mocked unit/API regressions (not a load proof).
+- `npm run test:db`: five HTTP exam journeys against a separate database explicitly named `quiz_hub_test`.
+- `npm run test:load`: 250 simultaneous student journeys; supports `node src/scripts/testExamJourney.js --users=300`.
+- `npm run test:races`: real MongoDB autosave-vs-submit/restart tests.
+- `npm run attempts:finalize`: one-shot expiry cleanup.
 
-Roll number alone **cannot verify identity**; open enrollment allows a first claimant to impersonate another roll number. If stronger identity protection is required, use an individual exam code or supervised verification.
-
-## Real MongoDB integration and load tests
-
-See [Phase 9 reliability checks](docs/PHASE9_TESTING.md). These tests require a separate `TEST_MONGODB_URI` and are intentionally **not run in GitHub Actions** without access to a dedicated test database. `npm run test:db` exercises five clients; `npm run test:load` sends 250 simultaneous student journeys. No test writes are allowed to the normal `quiz_hub` database.
-
-
-## Concurrent slot admissions (WriteConflict fix)
-
-Admissions no longer increment a single `Slot.admittedCount` inside a
-multi-document transaction. Each new `Attempt` contains a `seatNumber` (1 to
-the slot's capacity), and a unique MongoDB `{ slot, seatNumber }` index ensures
-no two students get the same seat. The existing unique `{ quiz, rollNo }` index
-still ensures only one attempt per roll per quiz.
-
-When 250 students start simultaneously, they each insert their own Attempt
-document; expected seat collisions (MongoDB E11000) retry another seat. They
-no longer write a shared Slot document, avoiding transaction WriteConflict
-hotspots. The exact limit is enforced by the unique seat index; no in-memory
-counter, queue or Redis is used.
-
-**Upgrade note:** Existing attempts created by the old admission implementation
-do not have `seatNumber`. The start endpoint intentionally rejects new
-admissions to a slot containing such legacy attempts so capacity cannot be
-silently exceeded. Use a **new slot** for new exams, or plan an explicit data
-migration for existing active slots before deploying this fix. Never delete
-real student attempts to bypass the guard.
-
-After merging the fix, rerun `npm run test:db` and `npm run test:load`
-against your private `quiz_hub_test` connection. GitHub CI does not run a
-real MongoDB stress test.
+Real DB tests require `TEST_MONGODB_URI` and must **never** run against production. Verify 200, 250, and 300 realistic students and test lost responses, retries, browser recovery, violation races and admin resets before live exams. A green GitHub Actions check alone does not establish production capacity.

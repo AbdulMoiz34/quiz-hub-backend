@@ -6,7 +6,6 @@ import mongoose from "mongoose";
 import { createApp } from "../app.js";
 import { connectDB, disconnectDB } from "../config/db.js";
 import { Quiz } from "../models/quiz.model.js";
-import { Slot } from "../models/slot.model.js";
 import { Attempt } from "../models/attempt.model.js";
 import { Admin } from "../models/admin.model.js";
 import { generateAdminJwt, generateAttemptJwt } from "../utils/generateJwt.js";
@@ -43,7 +42,6 @@ const config = {
   isDbReady: () => mongoose.connection.readyState === 1,
 };
 let quiz;
-let slot;
 let admin;
 let server;
 let base;
@@ -170,11 +168,11 @@ async function runTransportProbe() {
 }
 
 async function runStudent(i, questionId) {
-  const rollNo = String(i + 1).padStart(6, "0");
+  const email = "load-" + id + "-" + (i + 1) + "@example.test";
   const startKey = randomUUID();
   const startBody = {
     quizId: String(quiz._id), studentName: "Load Student " + (i + 1),
-    rollNo, startKey,
+    email, phone: "+923001234567", startKey,
   };
   // Keep failure context per student without leaking request credentials.
   let step = "start";
@@ -182,32 +180,32 @@ async function runStudent(i, questionId) {
     const start = await http("/api/v1/student/attempts/start", {
       method: "POST", body: startBody,
     });
-    expectOk(start, "start " + rollNo);
+    expectOk(start, "start " + email);
     const cookie = start.headers.get("set-cookie")?.split(";")[0];
     assert.ok(cookie?.startsWith("quiz_hub_attempt="));
   
     step = "current";
     const current = await http("/api/v1/student/attempts/current", { cookie });
-    expectOk(current, "resume " + rollNo);
+    expectOk(current, "resume " + email);
     assert.equal(current.data.data.questions.length, 1);
     assert.ok(!("correctAnswer" in current.data.data.questions[0]));
   
-    const answers = [{ questionId, answer: "B", timeSpent: 5, timedOut: false }];
+    const answers = [{ questionId, answer: "B" }];
     step = "draft";
     const draft = await http("/api/v1/student/attempts/draft", {
       method: "PUT", cookie, body: { version: 1, answers },
     });
-    expectOk(draft, "autosave " + rollNo);
+    expectOk(draft, "autosave " + email);
   
     step = "submit";
     const submit = await http("/api/v1/student/attempts/submit", {
       method: "POST", cookie, body: { version: 2, answers, reason: "student" },
     });
-    expectOk(submit, "submit " + rollNo);
+    expectOk(submit, "submit " + email);
     assert.equal(submit.data.data.status, "submitted");
   
     return {
-      rollNo, startKey, startBody, cookie, attemptId: start.data.data.id,
+      email, startKey, startBody, cookie, attemptId: start.data.data.id,
       timings: { start: start.ms, current: current.ms, draft: draft.ms, submit: submit.ms },
     };
   } catch (error) {
@@ -225,26 +223,19 @@ async function run() {
     throw new Error("REFUSED: TEST_MONGODB_URI must select database quiz_hub_test");
   }
   console.info("Connected to dedicated quiz_hub_test DB (no credentials printed)");
-  await Promise.all([Quiz.init(), Slot.init(), Attempt.init(), Admin.init()]);
+  await Promise.all([Quiz.init(), Attempt.init(), Admin.init()]);
 
   quiz = await Quiz.create({
     title: "Integration Test " + id,
     description: "Temporary exam fixture",
     durationMinutes: 30,
-    questionTimeSeconds: 45,
     maxViolations: 3,
     isPublished: true,
     questionCount: 1,
     questions: [{
       type: "mcq", prompt: "Choose the correct answer",
-      options: ["A", "B"], correctAnswer: "B", points: 1, timeSeconds: 45,
+      options: ["A", "B"], correctAnswer: "B", points: 1,
     }],
-  });
-  slot = await Slot.create({
-    quiz: quiz._id, name: "Integration Slot " + id,
-    startsAt: new Date(Date.now() - 60_000),
-    endsAt: new Date(Date.now() + 20 * 60_000),
-    capacity: userCount,
   });
   admin = await Admin.create({
     email: "integration-" + id + "@example.invalid",
@@ -283,8 +274,6 @@ async function run() {
   }
   const attemptCount = await Attempt.countDocuments({ quiz: quiz._id });
   const submittedCount = await Attempt.countDocuments({ quiz: quiz._id, status: "submitted" });
-  const admittedCount = await Attempt.countDocuments({ slot: slot._id });
-  const reservedSeats = await Attempt.distinct("seatNumber", { slot: slot._id });
 
   console.info(JSON.stringify({
     requestedStudents: userCount,
@@ -296,7 +285,6 @@ async function run() {
     firstFailures: failed.slice(0, 18),
     databaseAttempts: attemptCount,
     databaseSubmissions: submittedCount,
-    slotAdmissions: admittedCount,
     totalElapsedMs: Math.round(performance.now() - startTime),
     // Success-only latency cannot describe requests that timed out.
     p95SuccessfulRequestLatencyMs: Object.fromEntries(
@@ -309,10 +297,6 @@ async function run() {
   assert.equal(failed.length, 0, "Not all simulated students completed successfully");
   assert.equal(attemptCount, userCount, "Missing/duplicate attempts");
   assert.equal(submittedCount, userCount, "Missing submissions");
-  assert.equal(admittedCount, userCount, "Incorrect occupied seat count");
-  assert.equal(reservedSeats.length, userCount, "Two students were assigned the same seat");
-  assert.ok(reservedSeats.every((seat) => Number.isInteger(seat) &&
-    seat >= 1 && seat <= userCount), "Seat number outside slot capacity");
 
   const first = good[0];
   const sameKey = await http("/api/v1/student/attempts/start", {
@@ -324,14 +308,15 @@ async function run() {
   const differentKey = await http("/api/v1/student/attempts/start", {
     method: "POST", body: { ...first.startBody, startKey: randomUUID() },
   });
-  assert.equal(differentKey.status, 409, "Duplicated roll number must be rejected");
+  assert.equal(differentKey.status, 409, "Duplicate email must be rejected");
 
-  // The slot has exactly userCount seats: a new roll must receive 409.
-  const beyondCapacity = await http("/api/v1/student/attempts/start", {
+  // No slot capacity or schedule: another distinct email may always join.
+  const lateJoin = await http("/api/v1/student/attempts/start", {
     method: "POST",
-    body: { ...first.startBody, rollNo: "999998", startKey: randomUUID() },
+    body: { ...first.startBody, email: "late-" + id + "@example.test", startKey: randomUUID() },
   });
-  assert.equal(beyondCapacity.status, 409, "Full slot must reject new students");
+  expectOk(lateJoin, "late join to published quiz");
+  await Attempt.deleteOne({ _id: lateJoin.data.data.id });
 
   const repeatedSubmit = await http("/api/v1/student/attempts/submit", {
     method: "POST", cookie: first.cookie,
@@ -365,18 +350,19 @@ async function run() {
 
   // A late submit must use only previously persisted answers.
   const expired = await Attempt.create({
-    quiz: quiz._id, slot: slot._id, studentName: "Expired Test",
-    rollNo: "999999999999999999999999", startKeyHash: randomBytes(32).toString("hex"),
+    quiz: quiz._id, studentName: "Expired Test",
+    email: "expired-" + id + "@example.test", phone: "+923001234567",
+    startKeyHash: randomBytes(32).toString("hex"),
     startedAt: new Date(Date.now() - 3600_000),
     expiresAt: new Date(Date.now() - 120_000),
     status: "started", draftVersion: 1,
-    answers: [{ questionId, answer: "B", timeSpent: 2, timedOut: false }],
+    answers: [{ questionId, answer: "B" }],
   });
   const expiredCookie = "quiz_hub_attempt=" + generateAttemptJwt(expired, secret);
   const late = await http("/api/v1/student/attempts/submit", {
     method: "POST", cookie: expiredCookie,
     body: { version: 2, reason: "student", answers: [
-      { questionId, answer: "A", timeSpent: 3, timedOut: false },
+      { questionId, answer: "A" },
     ] },
   });
   expectOk(late, "expired attempt");
@@ -411,7 +397,6 @@ try {
     if (mongoose.connection.db?.databaseName === "quiz_hub_test") {
       if (quiz?._id) {
         await Attempt.deleteMany({ quiz: quiz._id });
-        await Slot.deleteMany({ quiz: quiz._id });
         await Quiz.deleteOne({ _id: quiz._id });
       }
       if (admin?._id) await Admin.deleteOne({ _id: admin._id });

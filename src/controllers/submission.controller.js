@@ -70,6 +70,9 @@ export const submitAttempt = async (req, res) => {
   const { version, answers, reason } = req.body;
   const attempt = req.attempt;
 
+  if (attempt.status === "terminated") {
+    return errorResponse(res, 409, "Exam terminated due to violations");
+  }
   if (attempt.status !== "started") {
     return successResponse(res, 200, "Exam already submitted", receipt(attempt));
   }
@@ -118,6 +121,9 @@ export const submitAttempt = async (req, res) => {
 
   const latest = await Attempt.findById(attempt._id);
   if (!latest) return errorResponse(res, 404, "Exam attempt not found");
+  if (latest.status === "terminated") {
+    return errorResponse(res, 409, "Exam terminated due to violations");
+  }
   if (latest.status !== "started") {
     return successResponse(res, 200, "Exam already submitted", receipt(latest));
   }

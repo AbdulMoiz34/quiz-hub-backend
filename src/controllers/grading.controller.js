@@ -10,7 +10,7 @@ export const getAttemptForReview = async (req, res) => {
   if (!isId(req.params.id)) return errorResponse(res, 400, "Invalid attempt ID");
 
   const attempt = await Attempt.findById(req.params.id)
-    .select("quiz slot studentName rollNo status startedAt expiresAt submittedAt submitReason answers score maxScore objectiveScore gradingStatus pendingReviewCount manualGrades gradingVersion")
+    .select("quiz studentName email phone violationCount violations status startedAt expiresAt submittedAt submitReason answers score maxScore objectiveScore gradingStatus pendingReviewCount manualGrades gradingVersion")
     .lean();
 
   if (!attempt) return errorResponse(res, 404, "Attempt not found");
