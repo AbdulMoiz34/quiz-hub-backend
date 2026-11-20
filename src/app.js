@@ -46,7 +46,10 @@ export function createApp(config = loadConfig()) {
   });
 
   app.use("/api/v1/admin", trustedOrigin(config.allowedOrigins), adminRoutes(config));
-  app.use("/api/v1/student", trustedOrigin(config.allowedOrigins), studentRoutes(config));
+  app.use("/api/v1/student", (req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    next();
+  }, trustedOrigin(config.allowedOrigins), studentRoutes(config));
   app.use((_, res) => errorResponse(res, 404, "Route not found"));
   app.use(errorHandler);
   return app;

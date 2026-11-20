@@ -135,5 +135,10 @@ export const currentAttempt = async (req, res) => {
       maxViolations: quiz.maxViolations,
     },
     questions: studentQuestions(quiz, req.attempt._id),
+    draft: {
+      version: req.attempt.draftVersion || 0,
+      answers: req.attempt.answers || [],
+      savedAt: req.attempt.lastSavedAt || null,
+    },
   });
 };
