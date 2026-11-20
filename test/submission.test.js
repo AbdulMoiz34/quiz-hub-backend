@@ -83,9 +83,12 @@ async function withFakeDatabase(callback, expired = false) {
     const validTime = !filter.expiresAt ||
       (filter.expiresAt.$gt && state.expiresAt > filter.expiresAt.$gt) ||
       (filter.expiresAt.$lte && state.expiresAt <= filter.expiresAt.$lte);
-    const validVersion = !filter.draftVersion ||
-      (Number.isInteger(filter.draftVersion.$lt) && state.draftVersion < filter.draftVersion.$lt) ||
-      (Number.isInteger(filter.draftVersion.$lte) && state.draftVersion <= filter.draftVersion.$lte);
+    const version = filter.draftVersion;
+    const validVersion = !version ||
+      (typeof version === "number" && state.draftVersion === version) ||
+      (Array.isArray(version.$in) && version.$in.includes(state.draftVersion)) ||
+      (Number.isInteger(version.$lt) && state.draftVersion < version.$lt) ||
+      (Number.isInteger(version.$lte) && state.draftVersion <= version.$lte);
 
     if (validStatus && validTime && validVersion) {
       writes++;
@@ -211,7 +214,9 @@ test("submit wins once, final answers are immutable, retries return same receipt
       const receipt = (await first.json()).data;
       assert.equal(receipt.status, "submitted");
       assert.equal(receipt.answeredCount, 1);
-      assert.equal(receipt.unansweredCount, 1);
+      assert.equal(receipt.unansweredCount, 0);
+      assert.equal(db.read().score, 1);
+      assert.equal(db.read().gradingStatus, "graded");
       assert.equal(db.countWrites(), 1);
 
       const retry = await request(base, "/api/v1/student/attempts/submit", "POST",
@@ -238,6 +243,8 @@ test("expired submission finalizes ONLY previously saved draft, not late answers
       assert.equal(db.read().status, "submitted");
       assert.equal(db.read().submitReason, "time_ended");
       assert.equal(db.read().answers[0].answer, "B");
+      assert.equal(db.read().score, 1);
+      assert.equal(db.read().gradingStatus, "graded");
       assert.equal(db.countWrites(), 1);
     });
   }, true);

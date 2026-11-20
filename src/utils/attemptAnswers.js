@@ -2,14 +2,15 @@ import { Quiz } from "../models/quiz.model.js";
 
 export async function getQuizQuestionIds(quizId) {
   const quiz = await Quiz.findById(quizId)
-    .select("questions._id questionCount")
+    .select("questions._id questions.type questions.points questions.correctAnswer questionCount")
     .lean();
 
   if (!quiz) return null;
 
   return {
     questionIds: new Set(quiz.questions.map((q) => String(q._id))),
-    questionCount: quiz.questionCount,
+    questionCount: quiz.questions.length,
+    questions: quiz.questions,
   };
 }
 

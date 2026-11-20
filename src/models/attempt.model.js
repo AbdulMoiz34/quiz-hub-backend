@@ -17,7 +17,6 @@ const attemptSchema = new mongoose.Schema({
   startedAt: { type: Date, required: true },
   expiresAt: { type: Date, required: true },
 
-  // One document per attempt: atomic drafts and finalization.
   answers: { type: [answerSchema], default: [] },
   draftVersion: { type: Number, default: 0, min: 0 },
   lastSavedAt: Date,
@@ -25,6 +24,15 @@ const attemptSchema = new mongoose.Schema({
   submitReason: { type: String, enum: ["student", "time_ended", "violation_limit"] },
   answeredCount: { type: Number, default: 0 },
   unansweredCount: { type: Number, default: 0 },
+
+  // Same document as the final answers: no separate Result/Grade collection.
+  score: { type: Number, default: 0, min: 0 },
+  maxScore: { type: Number, default: 0, min: 0 },
+  objectiveScore: { type: Number, default: 0, min: 0 },
+  gradingStatus: { type: String, enum: ["ungraded", "pending_review", "graded"], default: "ungraded" },
+  pendingReviewCount: { type: Number, default: 0, min: 0 },
+  manualGrades: { type: Map, of: Number, default: {} },
+  gradingVersion: { type: Number, default: 0, min: 0 },
 }, { timestamps: true });
 
 attemptSchema.index({ quiz: 1, rollNo: 1 }, { unique: true });

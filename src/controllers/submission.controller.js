@@ -2,6 +2,8 @@ import { Attempt } from "../models/attempt.model.js";
 import {
   getQuizQuestionIds, answersBelongToQuiz, countAnswered, sameAnswers,
 } from "../utils/attemptAnswers.js";
+import { gradeAttempt } from "../utils/gradeAttempt.js";
+import { finalizeExpiredAttempt } from "../utils/finalizeExpiredAttempt.js";
 import { errorResponse, successResponse } from "../utils/responseHandler.js";
 
 function receipt(attempt) {
@@ -40,7 +42,6 @@ export const saveDraft = async (req, res) => {
     return errorResponse(res, 400, "Answers contain an invalid question ID");
   }
 
-  // Atomic version check: delayed HTTP requests cannot overwrite newer drafts.
   const saved = await Attempt.findOneAndUpdate(
     {
       _id: attempt._id,
@@ -58,8 +59,6 @@ export const saveDraft = async (req, res) => {
   if (!latest || latest.status !== "started" || isExpired(latest)) {
     return errorResponse(res, 409, "Exam is no longer active");
   }
-
-  // Lost response retry with EXACT same version + answers is harmless.
   if (latest.draftVersion === version && sameAnswers(latest.answers, answers)) {
     return successResponse(res, 200, "Answers already saved", draftReceipt(latest));
   }
@@ -67,41 +66,10 @@ export const saveDraft = async (req, res) => {
   return errorResponse(res, 409, "Outdated draft. Reload your saved answers");
 };
 
-async function finalizeExpired(attemptId, questionCount) {
-  // Only the LAST SERVER-SAVED DRAFT is eligible after the deadline.
-  // Never accept fresh client answers once the exam timer has expired.
-  const attempt = await Attempt.findById(attemptId);
-  if (!attempt) return null;
-  if (attempt.status !== "started") return attempt;
-  if (!isExpired(attempt)) return attempt;
-
-  const answeredCount = countAnswered(attempt.answers);
-  const finalized = await Attempt.findOneAndUpdate(
-    {
-      _id: attemptId,
-      status: "started",
-      expiresAt: { $lte: new Date() },
-    },
-    {
-      $set: {
-        status: "submitted",
-        submitReason: "time_ended",
-        submittedAt: new Date(),
-        answeredCount,
-        unansweredCount: Math.max(0, questionCount - answeredCount),
-      },
-    },
-    { new: true }
-  );
-
-  return finalized || Attempt.findById(attemptId);
-}
-
 export const submitAttempt = async (req, res) => {
   const { version, answers, reason } = req.body;
   const attempt = req.attempt;
 
-  // Retrying a successfully finalized submission returns its same receipt.
   if (attempt.status !== "started") {
     return successResponse(res, 200, "Exam already submitted", receipt(attempt));
   }
@@ -110,7 +78,7 @@ export const submitAttempt = async (req, res) => {
   if (!quiz) return errorResponse(res, 404, "Quiz not found");
 
   if (isExpired(attempt)) {
-    const final = await finalizeExpired(attempt._id, quiz.questionCount);
+    const final = await finalizeExpiredAttempt(attempt._id);
     return successResponse(res, 200, "Deadline reached. Saved answers finalized", receipt(final));
   }
 
@@ -120,6 +88,7 @@ export const submitAttempt = async (req, res) => {
 
   const now = new Date();
   const answeredCount = countAnswered(answers);
+  const grade = gradeAttempt(quiz.questions, answers);
   const finished = await Attempt.findOneAndUpdate(
     {
       _id: attempt._id,
@@ -137,6 +106,7 @@ export const submitAttempt = async (req, res) => {
         submittedAt: now,
         answeredCount,
         unansweredCount: Math.max(0, quiz.questionCount - answeredCount),
+        ...grade,
       },
     },
     { new: true }
@@ -152,7 +122,7 @@ export const submitAttempt = async (req, res) => {
     return successResponse(res, 200, "Exam already submitted", receipt(latest));
   }
   if (isExpired(latest)) {
-    const final = await finalizeExpired(attempt._id, quiz.questionCount);
+    const final = await finalizeExpiredAttempt(attempt._id);
     return successResponse(res, 200, "Deadline reached. Saved answers finalized", receipt(final));
   }
   return errorResponse(res, 409, "Outdated submission. Reload your saved answers");

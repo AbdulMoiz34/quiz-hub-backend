@@ -12,7 +12,8 @@
     "db:check": "node src/scripts/check-db.js",
     "db:seed": "node src/seeds/adminSeed.js",
     "test": "node --test",
-    "check": "node --check src/app.js && node --check src/seeds/adminSeed.js && node --check src/routes/admin/auth.routes.js"
+    "check": "node --check src/app.js && node --check src/seeds/adminSeed.js && node --check src/routes/admin/auth.routes.js && node --check src/controllers/submission.controller.js && node --check src/controllers/grading.controller.js && node --check src/utils/finalizeExpiredAttempt.js && node --check src/scripts/finalizeExpired.js",
+    "attempts:finalize": "node src/scripts/finalizeExpired.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
