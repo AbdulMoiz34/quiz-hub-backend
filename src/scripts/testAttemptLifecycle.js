@@ -43,7 +43,7 @@ async function run() {
 
   const adminPassword = "test-password-" + randomUUID();
   admin = await Admin.create({
-    email: "lifecycle-" + id + "@example.invalid",
+    email: "lifecycle-" + id + "@example.com",
     passwordHash: await bcrypt.hash(adminPassword, 8),
   });
   server = createApp({
