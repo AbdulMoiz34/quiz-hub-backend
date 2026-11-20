@@ -5,7 +5,6 @@ import mongoose from "mongoose";
 import { createApp } from "../app.js";
 import { connectDB, disconnectDB } from "../config/db.js";
 import { Quiz } from "../models/quiz.model.js";
-import { Slot } from "../models/slot.model.js";
 import { Attempt } from "../models/attempt.model.js";
 import { generateAttemptJwt } from "../utils/generateJwt.js";
 import { finalizeExpiredAttempt } from "../utils/finalizeExpiredAttempt.js";
@@ -22,15 +21,14 @@ const config = {
 const counts = { outOfOrderDrafts: 0, duplicateSubmits: 0,
   draftVsSubmit: 0, expiredFinalization: 0, restartRecovery: 0 };
 let quiz;
-let slot;
 let server;
 let base;
-let nextRoll = 1;
+let nextStudent = 1;
 let questionId;
 let created = 0;
 
 function answer(value) {
-  return [{ questionId, answer: value, timeSpent: 5, timedOut: false }];
+  return [{ questionId, answer: value }];
 }
 
 async function listen() {
@@ -52,13 +50,12 @@ async function closeServer() {
 }
 
 async function createAttempt({ version = 0, savedAnswer = "", expired = false } = {}) {
-  const rollNo = String(nextRoll++).padStart(6, "0");
+  const number = nextStudent++;
   const attempt = await Attempt.create({
     quiz: quiz._id,
-    slot: slot._id,
-    seatNumber: nextRoll - 1,
-    studentName: "Race Test Student " + rollNo,
-    rollNo,
+    studentName: "Race Test Student " + number,
+    email: "race-" + String(quiz._id) + "-" + number + "@example.test",
+    phone: "+923001234567",
     startKeyHash: createHash("sha256").update(randomUUID()).digest("hex"),
     startedAt: new Date(Date.now() - 120_000),
     expiresAt: new Date(Date.now() + (expired ? -10_000 : 10 * 60_000)),
@@ -220,27 +217,20 @@ async function run() {
     throw new Error("REFUSED: test database must be named quiz_hub_test");
   }
   console.info("Connected to isolated quiz_hub_test DB (credentials hidden)");
-  await Promise.all([Quiz.init(), Slot.init(), Attempt.init()]);
+  await Promise.all([Quiz.init(), Attempt.init()]);
   const id = randomUUID().slice(0, 8);
   quiz = await Quiz.create({
     title: "Race Integration " + id,
     durationMinutes: 15,
-    questionTimeSeconds: 45,
     maxViolations: 3,
     questionCount: 1,
     isPublished: true,
     questions: [{
       type: "mcq", prompt: "Pick the correct option",
-      options: ["A", "B"], correctAnswer: "B", points: 1, timeSeconds: 45,
+      options: ["A", "B"], correctAnswer: "B", points: 1,
     }],
   });
   questionId = String(quiz.questions[0]._id);
-  slot = await Slot.create({
-    quiz: quiz._id, name: "Race Slot " + id,
-    startsAt: new Date(Date.now() - 60_000),
-    endsAt: new Date(Date.now() + 15 * 60_000),
-    capacity: 250,
-  });
   await listen();
   const iterations = 5;
   for (let i = 0; i < iterations; i += 1) {
@@ -280,7 +270,6 @@ try {
     if (mongoose.connection.db?.databaseName === "quiz_hub_test") {
       if (quiz?._id) {
         await Attempt.deleteMany({ quiz: quiz._id });
-        await Slot.deleteMany({ quiz: quiz._id });
         await Quiz.deleteOne({ _id: quiz._id });
       }
     }
