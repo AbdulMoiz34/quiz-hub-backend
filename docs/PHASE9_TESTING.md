@@ -200,3 +200,33 @@ to be measured, **not established root causes**.
 
 No production `app.js`, MongoDB pool configuration, seat logic, retry
 policy or dependencies are modified by this diagnostic.
+
+
+## Phase 11: real MongoDB concurrent-write regression tests
+
+The 250-user journey test checks total students and server-side results.
+It does not deliberately race autosave vs autosave, autosave vs submit, or
+submit vs submit on **the same** attempt.
+
+The separate `npm run test:races` script targets those invariants against
+**only** the explicitly selected `quiz_hub_test` database. It runs
+five iterations of four race cases plus one HTTP restart/recovery case:
+out-of-order draft versions, duplicate final submissions with conflicting
+answers, a newer draft versus stale final submit, and late submit versus
+expiration finalization. It independently reads all persisted Attempt
+documents to verify immutable submissions, trusted grading and record counts.
+
+```powershell
+# Set the private TEST_MONGODB_URI locally to a dedicated quiz_hub_test DB.
+npm run test:races
+```
+
+There are no new services or npm dependencies. Test fixtures are deleted
+by their temporary quiz ID after the run. A forced process termination can
+leave only test fixtures in `quiz_hub_test`; inspect them manually if needed.
+GitHub CI checks syntax, but this real database test **does not run in CI**
+without a separate authorized test database.
+
+**Passing this race regression does not resolve** the previously observed
+Windows simultaneous TCP connection refusals, the slow 250-user start p95,
+or frontend/production deployment readiness.
