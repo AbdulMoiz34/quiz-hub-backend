@@ -30,7 +30,7 @@ export const updateQuiz = async (req, res) => {
   const quiz = await Quiz.findOneAndUpdate(
     { _id: req.params.id, isPublished: false },
     { $set: { ...req.body, questionCount: req.body.questions.length } },
-    { new: true, runValidators: true }
+    { returnDocument: "after", runValidators: true }
   );
   if (!quiz) return errorResponse(res, 409, "Quiz not found or currently published");
   return successResponse(res, 200, "Quiz updated", { id: String(quiz._id) });
@@ -39,7 +39,7 @@ export const updateQuiz = async (req, res) => {
 export const publishQuiz = async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return errorResponse(res, 400, "Invalid quiz ID");
   const quiz = await Quiz.findByIdAndUpdate(
-    req.params.id, { $set: { isPublished: true } }, { new: true }
+    req.params.id, { $set: { isPublished: true } }, { returnDocument: "after" }
   ).select("title isPublished");
   if (!quiz) return errorResponse(res, 404, "Quiz not found");
   return successResponse(res, 200, "Quiz published", quiz);

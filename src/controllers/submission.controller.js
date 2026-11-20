@@ -50,7 +50,7 @@ export const saveDraft = async (req, res) => {
       draftVersion: { $lt: version },
     },
     { $set: { answers, draftVersion: version, lastSavedAt: new Date() } },
-    { new: true }
+    { returnDocument: "after" }
   ).select("draftVersion lastSavedAt");
 
   if (saved) return successResponse(res, 200, "Answers saved", draftReceipt(saved));
@@ -109,7 +109,7 @@ export const submitAttempt = async (req, res) => {
         ...grade,
       },
     },
-    { new: true }
+    { returnDocument: "after" }
   );
 
   if (finished) {

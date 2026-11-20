@@ -71,7 +71,7 @@ export const updateSlot = async (req, res) => {
     const updated = await Slot.findOneAndUpdate(
       { _id: slot._id, startsAt: { $gt: new Date() } },
       { $set: req.body },
-      { new: true, runValidators: true }
+      { returnDocument: "after", runValidators: true }
     );
     if (!updated) return errorResponse(res, 409, "Slot already started");
     return successResponse(res, 200, "Exam slot updated", updated);
