@@ -7,14 +7,20 @@ import { errorResponse, successResponse } from "../utils/responseHandler.js";
 // proof of cheating: users can suppress client-side reports.
 export const reportViolation = async (req, res) => {
   const attempt = req.attempt;
-  if (attempt.status !== "started" || new Date(attempt.expiresAt) <= new Date()) {
-    return errorResponse(res, 409, "Exam is no longer active");
-  }
-
   const quiz = await Quiz.findById(attempt.quiz).select("maxViolations").lean();
   if (!quiz) return errorResponse(res, 404, "Quiz not found");
 
   const { eventId, type } = req.body;
+  if (attempt.violations?.some((event) => event.eventId === eventId)) {
+    return successResponse(res, 200, "Violation already recorded", {
+      status: attempt.status, violationCount: attempt.violationCount,
+      maxViolations: quiz.maxViolations,
+    });
+  }
+  if (attempt.status !== "started" || new Date(attempt.expiresAt) <= new Date()) {
+    return errorResponse(res, 409, "Exam is no longer active");
+  }
+
   const now = new Date();
   const nextCount = { $add: [{ $ifNull: ["$violationCount", 0] }, 1] };
   const limitReached = { $gte: [nextCount, quiz.maxViolations] };
