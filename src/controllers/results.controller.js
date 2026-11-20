@@ -30,8 +30,8 @@ export const listResults = async (req, res) => {
 };
 
 export const resultsStats = async (req, res) => {
-  const { quizId, slotId } = req.validatedQuery;
-  const filter = buildResultFilter({ quizId, slotId });
+  const { quizId } = req.validatedQuery;
+  const filter = buildResultFilter({ quizId });
   const now = new Date();
 
   const [stats] = await Attempt.aggregate([

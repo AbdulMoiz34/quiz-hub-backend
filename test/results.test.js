@@ -12,8 +12,6 @@ import { listResultsSchema, exportResultsSchema } from "../src/validations/resul
 
 const quiz = new mongoose.Types.ObjectId();
 const otherQuiz = new mongoose.Types.ObjectId();
-const slot1 = new mongoose.Types.ObjectId();
-const slot2 = new mongoose.Types.ObjectId();
 const admin = {
   _id: new mongoose.Types.ObjectId(),
   email: "admin@example.com",
@@ -25,9 +23,11 @@ const secret = "admin-results-test-secret-which-is-long-enough-123";
 const rows = Array.from({ length: 1505 }, (_, i) => ({
   _id: new mongoose.Types.ObjectId((i + 1).toString(16).padStart(24, "0")),
   quiz: quiz,
-  slot: i % 2 === 0 ? slot1 : slot2,
-  rollNo: String(i + 1).padStart(5, "0"),
-  studentName: i === 0 ? '=HYPERLINK("http://example.com")' : "Student " + (i + 1),
+  fullName: i === 0 ? '=HYPERLINK("http://example.com")' : "Student " + (i + 1),
+  email: "candidate" + (i + 1) + "@example.com",
+  phone: "+923001234567",
+  violationCount: i % 3,
+  maxViolations: 3,
   status: i % 8 === 0 ? "started" : "submitted",
   startedAt: new Date("2026-11-20T09:00:00Z"),
   expiresAt: i % 8 === 0 ? new Date(Date.now() - 60_000) : new Date(Date.now() + 60_000),
@@ -45,10 +45,9 @@ const rows = Array.from({ length: 1505 }, (_, i) => ({
 
 function fakeMatch(filter, row) {
   if (filter.quiz && String(filter.quiz) !== String(row.quiz)) return false;
-  if (filter.slot && String(filter.slot) !== String(row.slot)) return false;
   if (filter.status && filter.status !== row.status) return false;
   if (filter.gradingStatus && filter.gradingStatus !== row.gradingStatus) return false;
-  if (filter.rollNo && filter.rollNo !== row.rollNo) return false;
+  if (filter.email && filter.email !== row.email) return false;
   if (filter._id?.$lt && !(String(row._id) < String(filter._id.$lt))) return false;
   return true;
 }
@@ -139,9 +138,9 @@ test("results APIs reject requests without admin credentials", async () => {
   });
 });
 
-test("query validation rejects malformed cursor and roll number", () => {
+test("query validation rejects malformed cursor and email address", () => {
   assert.ok(listResultsSchema.validate({ quizId: String(quiz), cursor: "invalid" }).error);
-  assert.ok(listResultsSchema.validate({ quizId: String(quiz), rollNo: "CS-123" }).error);
+  assert.ok(listResultsSchema.validate({ quizId: String(quiz), email: "invalid" }).error);
   assert.ok(listResultsSchema.validate({ quizId: String(quiz), limit: 101 }).error);
   assert.ok(exportResultsSchema.validate({ quizId: String(quiz), cursor: String(quiz) }).error);
 });
@@ -156,7 +155,7 @@ test("pagination fetches only a bounded page; cursor gives unique records", asyn
     assert.equal(one.hasMore, true);
     assert.equal(db.lastLimit(), 26);
     assert.ok(one.nextCursor);
-    assert.equal(one.items[0].rollNo, "01505");
+    assert.equal(one.items[0].email, "candidate1505@example.com");
     assert.ok(!("answers" in one.items[0]));
     assert.ok(!("startKeyHash" in one.items[0]));
     assert.ok(!("manualGrades" in one.items[0]));
@@ -170,17 +169,16 @@ test("pagination fetches only a bounded page; cursor gives unique records", asyn
   }));
 });
 
-test("numeric roll and slot/status filter apply to MongoDB, not just current page", async () => {
+test("email/status filter applies in MongoDB, not just the current page", async () => {
   await withMockDb(async (db) => withServer(async (base, cookie) => {
     const res = await fetch(base + "/api/v1/admin/results?quizId=" + quiz +
-      "&rollNo=00001&slotId=" + slot1 + "&status=started", { headers: { Cookie: cookie } });
+      "&email=candidate1@example.com&status=started", { headers: { Cookie: cookie } });
     assert.equal(res.status, 200);
     const result = (await res.json()).data;
     assert.equal(result.items.length, 1);
-    assert.equal(result.items[0].rollNo, "00001");
-    assert.equal(String(db.lastFilter().slot), String(slot1));
+    assert.equal(result.items[0].email, "candidate1@example.com");
     assert.equal(db.lastFilter().status, "started");
-    assert.equal(db.lastFilter().rollNo, "00001");
+    assert.equal(db.lastFilter().email, "candidate1@example.com");
     assert.equal(result.hasMore, false);
   }));
 });

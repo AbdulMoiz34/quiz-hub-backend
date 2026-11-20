@@ -7,249 +7,174 @@ import { createApp } from "../src/app.js";
 import { startAttemptSchema } from "../src/validations/attempt.validation.js";
 import { Attempt } from "../src/models/attempt.model.js";
 import { Quiz } from "../src/models/quiz.model.js";
-import { Slot } from "../src/models/slot.model.js";
 import { studentQuestions } from "../src/utils/studentQuestions.js";
 import { generateAttemptJwt } from "../src/utils/generateJwt.js";
 
 const origin = "http://localhost:5173";
 const secret = "unique-testing-secret-over-32-characters-and-more";
 const quizId = new mongoose.Types.ObjectId().toString();
-const slotId = new mongoose.Types.ObjectId();
 const attemptId = new mongoose.Types.ObjectId();
-const startKey = randomUUID();
+const key = randomUUID();
+const candidate = {
+  quizId, fullName: "Ahmed Ali", email: "Ahmed@Example.com",
+  phone: "+92 300 1234567", startKey: key,
+};
 
-const candidate = { quizId, studentName: "Ahmed Ali", rollNo: "00123", startKey };
+function query(value) {
+  return {
+    select() { return this; },
+    sort() { return this; },
+    lean: async () => value,
+    then(resolve, reject) { return Promise.resolve(value).then(resolve, reject); },
+  };
+}
 
-async function withServer(callback) {
+async function withServer(fn) {
   const server = createApp({
     allowedOrigins: [origin], jwtSecret: secret, nodeEnv: "test",
     cookieSameSite: "lax", isDbReady: () => true,
   }).listen(0, "127.0.0.1");
   await once(server, "listening");
-
-  try { await callback("http://127.0.0.1:" + server.address().port); }
+  try { await fn("http://127.0.0.1:" + server.address().port); }
   finally { await new Promise((resolve) => server.close(resolve)); }
 }
 
 const post = (base, body) => fetch(base + "/api/v1/student/attempts/start", {
-  method: "POST",
-  headers: { Origin: origin, "Content-Type": "application/json" },
+  method: "POST", headers: { Origin: origin, "Content-Type": "application/json" },
   body: JSON.stringify(body),
 });
 
-test("numeric roll number is stored as a string and leading zeros remain intact", () => {
+test("validates full name, normalized email, international phone and UUIDv4", () => {
   const { error, value } = startAttemptSchema.validate(candidate);
   assert.equal(error, undefined);
-  assert.equal(value.rollNo, "00123");
-});
-
-test("invalid roll numbers and JSON numbers are rejected", () => {
-  for (const rollNo of ["123A", "12-3", "12.3", "-12", "+12", "1e5", "", "12 3", "  ", "9".repeat(26), 123]) {
-    assert.ok(startAttemptSchema.validate({ ...candidate, rollNo }).error, String(rollNo));
+  assert.equal(value.email, "ahmed@example.com");
+  assert.equal(value.phone, "+923001234567");
+  for (const patch of [
+    { email: "invalid" }, { fullName: "x" },
+    { phone: "12345" }, { startKey: "not-a-uuid" },
+    { rollNo: "00123" },
+  ]) {
+    assert.ok(startAttemptSchema.validate({ ...candidate, ...patch }).error);
   }
 });
 
-test("client retry key must be a UUIDv4", () => {
-  assert.ok(startAttemptSchema.validate({ ...candidate, startKey: "123" }).error);
+test("attempt has a partial unique quiz/email index and no slot model dependency", () => {
+  assert.ok(Attempt.schema.indexes().some(([index, config]) =>
+    index.quiz === 1 && index.email === 1 && config.unique &&
+    config.partialFilterExpression?.email?.$type === "string"));
+  assert.equal(Attempt.schema.path("slot"), undefined);
+  assert.equal(Attempt.schema.path("seatNumber"), undefined);
+  assert.equal(Attempt.schema.path("rollNo"), undefined);
 });
 
-test("database uniqueness is one roll number per quiz, regardless of slot", () => {
-  assert.ok(Attempt.schema.indexes().some(([index, settings]) =>
-    index.quiz === 1 && index.rollNo === 1 && settings.unique === true
-  ));
-});
-
-test("student API rejects invalid roll number before database query", async () => {
+test("start endpoint rejects invalid candidate before database queries", async () => {
   await withServer(async (base) => {
-    const response = await post(base, { ...candidate, rollNo: "CS-123" });
+    const response = await post(base, { ...candidate, email: "bad" });
     assert.equal(response.status, 400);
   });
 });
 
-test("no attempt can be read without its signed cookie", async () => {
+test("student GET /current requires the signed attempt cookie", async () => {
   await withServer(async (base) => {
     const response = await fetch(base + "/api/v1/student/attempts/current");
     assert.equal(response.status, 401);
   });
 });
 
-test("no-origin browser POSTs are rejected", async () => {
+test("untrusted/no-origin writes are blocked", async () => {
   await withServer(async (base) => {
     const response = await fetch(base + "/api/v1/student/attempts/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(candidate),
     });
     assert.equal(response.status, 403);
   });
 });
 
-test("safe question delivery does not expose correct answers or coding tests", () => {
+test("safe question delivery never exposes correct answers, testCases or question timers", () => {
   const qId = new mongoose.Types.ObjectId();
-  const codeId = new mongoose.Types.ObjectId();
   const quiz = {
     randomizeQuestions: true, randomizeOptions: true,
     questions: [{
-      _id: qId, type: "mcq", prompt: "Pick one", code: "",
-      options: ["A", "B", "C"], correctAnswer: "C",
-      testCases: [{ expected: "secret" }], points: 1, timeSeconds: 45,
-    }, {
-      _id: codeId, type: "coding", prompt: "Write a function",
-      starterCode: "function f() {}", language: "javascript",
-      testCases: [{ input: "hidden", expected: "hidden" }],
-      points: 3, timeSeconds: 90,
+      _id: qId, type: "mcq", prompt: "Choose", options: ["A", "B"],
+      correctAnswer: "B", points: 1, timeSeconds: 15,
+      testCases: [{ expected: "SECRET" }],
     }],
   };
-
-  const first = studentQuestions(quiz, attemptId);
-  const again = studentQuestions(quiz, attemptId);
-  assert.deepEqual(first, again, "Refresh must preserve question and option order");
-  assert.equal(first.length, 2);
-  for (const q of first) {
-    assert.ok(!("correctAnswer" in q));
-    assert.ok(!("testCases" in q));
-    assert.ok(!("startKeyHash" in q));
-  }
+  const questions = studentQuestions(quiz, attemptId);
+  assert.deepEqual(questions, studentQuestions(quiz, attemptId));
+  assert.equal(questions[0].correctAnswer, undefined);
+  assert.equal(questions[0].testCases, undefined);
+  assert.equal(questions[0].timeSeconds, undefined);
 });
 
-test("start reserves a unique seat; retries are idempotent and do not consume seats", async () => {
-  const original = {
-    attemptFind: Attempt.findOne,
-    attemptExists: Attempt.exists,
-    quizFind: Quiz.findOne,
-    slotFind: Slot.findOne,
-    create: Attempt.create,
+test("published quiz starts without a slot and expires after its own duration", async () => {
+  const originals = {
+    findOne: Attempt.findOne, create: Attempt.create, quiz: Quiz.findOne,
   };
-  const expires = new Date(Date.now() + 40 * 60_000);
-  let saved = null;
-  const seats = [];
-  let collisions = 0;
-
-  Attempt.findOne = () => ({ select: async () => saved });
-  Attempt.exists = async () => null;
-  Quiz.findOne = () => ({ select: async () => ({ _id: quizId, durationMinutes: 30 }) });
-  Slot.findOne = () => ({
-    select: () => ({ lean: async () => ({ _id: slotId, endsAt: expires, capacity: 250 }) }),
-  });
-  Attempt.create = async (doc) => {
-    if (!collisions++) {
-      const err = new Error("Seat already occupied");
-      err.code = 11000;
-      err.keyPattern = { slot: 1, seatNumber: 1 };
-      throw err;
+  const attempts = new Map();
+  Attempt.findOne = ({ email }) => query(attempts.get(email) || null);
+  Quiz.findOne = () => query({ durationMinutes: 60, maxViolations: 3 });
+  Attempt.create = async (record) => {
+    if (attempts.has(record.email)) {
+      const error = new Error("duplicate");
+      error.code = 11000;
+      error.keyPattern = { quiz: 1, email: 1 };
+      throw error;
     }
-    seats.push(doc.seatNumber);
-    saved = { _id: attemptId, ...doc, status: "started" };
-    return saved;
+    const a = { ...record, _id: new mongoose.Types.ObjectId(), status: "started",
+      violationCount: 0 };
+    attempts.set(record.email, a);
+    return a;
   };
-
   try {
     await withServer(async (base) => {
       const first = await post(base, candidate);
       assert.equal(first.status, 200);
-      assert.equal((await first.json()).data.rollNo, "00123");
-      assert.match(first.headers.get("set-cookie"), /HttpOnly/);
-      assert.equal(seats.length, 1);
-      assert.ok(seats[0] >= 1 && seats[0] <= 250);
+      const created = (await first.json()).data;
+      assert.equal(created.email, "ahmed@example.com");
+      assert.equal(created.fullName, "Ahmed Ali");
+      assert.equal(created.phone, "+923001234567");
+      assert.equal(created.maxViolations, 3);
+      assert.equal(new Date(created.expiresAt) - new Date(created.startedAt), 3_600_000);
+      assert.ok(first.headers.get("set-cookie"));
 
-      const retry = await post(base, candidate);
+      // Same retry key is idempotent.
+      const retry = await post(base, { ...candidate, email: "AHMED@example.com" });
       assert.equal(retry.status, 200);
-      assert.equal((await retry.json()).data.id, String(attemptId));
-      assert.equal(seats.length, 1, "Retry must not create a second seat");
+      assert.equal((await retry.json()).data.id, created.id);
 
-      const other = await post(base, { ...candidate, startKey: randomUUID() });
-      assert.equal(other.status, 409);
-      assert.equal(seats.length, 1);
-      assert.equal(saved.startKeyHash, createHash("sha256").update(startKey).digest("hex"));
+      // A second key with the same email is refused for this quiz.
+      const duplicate = await post(base, { ...candidate, startKey: randomUUID() });
+      assert.equal(duplicate.status, 409);
+      assert.equal(attempts.size, 1);
     });
   } finally {
-    Attempt.findOne = original.attemptFind;
-    Attempt.exists = original.attemptExists;
-    Quiz.findOne = original.quizFind;
-    Slot.findOne = original.slotFind;
-    Attempt.create = original.create;
+    Attempt.findOne = originals.findOne;
+    Attempt.create = originals.create;
+    Quiz.findOne = originals.quiz;
   }
 });
 
-test("all occupied seats return 409 without overbooking", async () => {
-  const original = {
-    attemptFind: Attempt.findOne,
-    attemptExists: Attempt.exists,
-    quizFind: Quiz.findOne,
-    slotFind: Slot.findOne,
-    create: Attempt.create,
-  };
-  let attemptedSeats = 0;
-  Attempt.findOne = () => ({ select: async () => null });
-  Attempt.exists = async () => null;
-  Quiz.findOne = () => ({ select: async () => ({ durationMinutes: 30 }) });
-  Slot.findOne = () => ({
-    select: () => ({ lean: async () => ({
-      _id: slotId, endsAt: new Date(Date.now() + 60_000), capacity: 3,
-    }) }),
-  });
-  Attempt.create = async () => {
-    attemptedSeats += 1;
-    const err = new Error("Seat already occupied");
-    err.code = 11000;
-    err.keyPattern = { slot: 1, seatNumber: 1 };
-    throw err;
-  };
-
-  try {
-    await withServer(async (base) => {
-      const response = await post(base, candidate);
-      assert.equal(response.status, 409);
-      assert.equal((await response.json()).message, "Exam slot is full");
-      assert.equal(attemptedSeats, 3);
-    });
-  } finally {
-    Attempt.findOne = original.attemptFind;
-    Attempt.exists = original.attemptExists;
-    Quiz.findOne = original.quizFind;
-    Slot.findOne = original.slotFind;
-    Attempt.create = original.create;
-  }
-});
-
-test("a unique slot-seat index prevents concurrent overbooking", () => {
-  const seatIndex = Attempt.schema.indexes().find(([fields]) =>
-    fields.slot === 1 && fields.seatNumber === 1);
-  assert.ok(seatIndex, "Missing slot+seatNumber index");
-  assert.equal(seatIndex[1].unique, true);
-  assert.deepEqual(seatIndex[1].partialFilterExpression, {
-    seatNumber: { $type: "number" },
-  });
-});
-
-test("expired attempts cannot fetch questions even with a valid cookie", async () => {
+test("expired current attempt returns no private questions", async () => {
   const original = Attempt.findById;
-  Attempt.findById = () => ({
-    lean: async () => ({
-      _id: attemptId,
-      quiz: new mongoose.Types.ObjectId(quizId),
-      slot: slotId,
-      rollNo: "00123",
-      studentName: "Ahmed Ali",
-      status: "started",
-      startedAt: new Date(Date.now() - 3600_000),
-      expiresAt: new Date(Date.now() - 1000),
-    }),
+  Attempt.findById = () => query({
+    _id: attemptId, quiz: new mongoose.Types.ObjectId(quizId),
+    fullName: "Ahmed Ali", email: "ahmed@example.com", phone: "+923001234567",
+    violationCount: 1, maxViolations: 3, status: "started",
+    startedAt: new Date(Date.now() - 120_000),
+    expiresAt: new Date(Date.now() - 10_000),
   });
-
   try {
     await withServer(async (base) => {
-      const token = generateAttemptJwt({ _id: attemptId }, secret);
       const response = await fetch(base + "/api/v1/student/attempts/current", {
-        headers: { Cookie: "quiz_hub_attempt=" + token },
+        headers: { Cookie: "quiz_hub_attempt=" + generateAttemptJwt({ _id: attemptId }, secret) },
       });
       assert.equal(response.status, 200);
       const data = (await response.json()).data;
       assert.equal(data.attempt.status, "expired");
       assert.deepEqual(data.questions, []);
-      assert.ok(Number.isFinite(Date.parse(data.serverNow)), "Server time must be present for expired sessions");
+      assert.ok(Number.isFinite(Date.parse(data.serverNow)));
     });
-  } finally {
-    Attempt.findById = original;
-  }
+  } finally { Attempt.findById = original; }
 });

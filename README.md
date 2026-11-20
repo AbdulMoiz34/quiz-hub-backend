@@ -1,3 +1,7 @@
+> **Backend migration requirement:** A published quiz is now open at any time; student entry uses fullName/email/phone. Before deploying this version to a database containing historical roll/slot attempts, back up the database, stop old API workers, and run `npm run db:migrate:email-attempts` to drop the old unique `quiz_1_rollNo_1` index and build the new partial unique `{quiz,email}` index. The script preserves historical attempt records. Do not run old/new backend versions simultaneously. **Existing historical roll-only attempts do not receive email addresses automatically.**
+
+> **Exam rules:** Only overall `durationMinutes` is enforced; browser-reported tab/window violations are counted server-side and terminate the attempt at `maxViolations`. Browser event detection can be bypassed and is not remote proctoring. Admin may delete an individual Attempt to allow reattempt; its answers, marks and review are irreversibly removed.
+
 # Quiz Hub Backend
 
 Node.js 22 + Express 5 + MongoDB Atlas, simple modular monolith. One `src/app.js` entry point, Painting-style routes/controllers/models/validators/utils, and no Redis or new packages.

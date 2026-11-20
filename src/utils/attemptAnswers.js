@@ -2,7 +2,7 @@ import { Quiz } from "../models/quiz.model.js";
 
 export async function getQuizQuestionIds(quizId) {
   const quiz = await Quiz.findById(quizId)
-    .select("questions._id questions.type questions.points questions.correctAnswer questionCount")
+    .select("questions._id questions.type questions.points questions.correctAnswer questionCount maxViolations")
     .lean();
 
   if (!quiz) return null;

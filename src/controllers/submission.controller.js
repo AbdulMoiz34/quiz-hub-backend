@@ -102,7 +102,7 @@ export const submitAttempt = async (req, res) => {
         draftVersion: version,
         lastSavedAt: now,
         status: "submitted",
-        submitReason: reason,
+        submitReason: "student",
         submittedAt: now,
         answeredCount,
         unansweredCount: Math.max(0, quiz.questionCount - answeredCount),

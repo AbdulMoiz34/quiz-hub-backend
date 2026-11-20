@@ -16,7 +16,8 @@
     "attempts:finalize": "node src/scripts/finalizeExpired.js",
     "test:db": "node src/scripts/testExamJourney.js --users=5",
     "test:load": "node src/scripts/testExamJourney.js --users=250",
-    "test:races": "node src/scripts/testSubmissionRaces.js"
+    "test:races": "node src/scripts/testSubmissionRaces.js",
+    "db:migrate:email-attempts": "node src/scripts/migrateEmailAttempts.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

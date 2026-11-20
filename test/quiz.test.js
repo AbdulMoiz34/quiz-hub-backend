@@ -20,6 +20,9 @@ test("accepts a valid MCQ with server-side answer key", () => {
   assert.equal(error, undefined);
   assert.equal(value.questions[0].correctAnswer, "HyperText Markup Language");
   assert.equal(value.maxViolations, 3);
+  assert.equal(value.durationMinutes, 30);
+  assert.equal(value.questionTimeSeconds, undefined);
+  assert.equal(value.questions[0].timeSeconds, undefined);
 });
 
 test("rejects MCQ without valid answer key", () => {
@@ -68,4 +71,14 @@ test("admin quiz endpoints require a valid admin cookie", async () => {
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("one overall duration only: rejects per-question time settings", () => {
+  assert.ok(quizSchema.validate({ ...validQuiz, questionTimeSeconds: 45 }).error);
+  assert.ok(quizSchema.validate({
+    ...validQuiz,
+    questions: [{ ...validQuiz.questions[0], timeSeconds: 45 }],
+  }).error);
+  assert.ok(quizSchema.validate({ ...validQuiz, durationMinutes: 0 }).error);
+  assert.equal(quizSchema.validate({ ...validQuiz, durationMinutes: 60 }).error, undefined);
 });

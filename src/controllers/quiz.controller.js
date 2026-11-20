@@ -12,7 +12,7 @@ export const createQuiz = async (req, res) => {
 
 export const listQuizzes = async (_req, res) => {
   const quizzes = await Quiz.find()
-    .select("title description durationMinutes questionTimeSeconds maxViolations isPublished resultsPublished createdAt questionCount")
+    .select("title description durationMinutes maxViolations isPublished resultsPublished createdAt questionCount")
     .sort({ createdAt: -1 })
     .lean();
   return successResponse(res, 200, "Quizzes fetched", quizzes);

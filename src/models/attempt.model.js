@@ -9,14 +9,17 @@ const answerSchema = new mongoose.Schema({
 
 const attemptSchema = new mongoose.Schema({
   quiz: { type: mongoose.Schema.Types.ObjectId, ref: "Quiz", required: true },
-  slot: { type: mongoose.Schema.Types.ObjectId, ref: "Slot", required: true },
-  seatNumber: { type: Number, min: 1 },
-  studentName: { type: String, required: true, trim: true },
-  rollNo: { type: String, required: true, match: /^[0-9]{1,25}$/ },
+  fullName: { type: String, required: true, trim: true },
+  email: { type: String, required: true, trim: true, lowercase: true },
+  phone: { type: String, required: true, trim: true },
   startKeyHash: { type: String, required: true, select: false },
   status: { type: String, enum: ["started", "submitted", "terminated"], default: "started" },
   startedAt: { type: Date, required: true },
   expiresAt: { type: Date, required: true },
+
+  violationCount: { type: Number, default: 0, min: 0 },
+  maxViolations: { type: Number, required: true, min: 1, max: 10 },
+  violationEventIds: { type: [String], default: [], select: false },
 
   answers: { type: [answerSchema], default: [] },
   draftVersion: { type: Number, default: 0, min: 0 },
@@ -26,7 +29,7 @@ const attemptSchema = new mongoose.Schema({
   answeredCount: { type: Number, default: 0 },
   unansweredCount: { type: Number, default: 0 },
 
-  // Same document as the final answers: no separate Result/Grade collection.
+  // Answers, final marks and manual grading live on one Attempt document.
   score: { type: Number, default: 0, min: 0 },
   maxScore: { type: Number, default: 0, min: 0 },
   objectiveScore: { type: Number, default: 0, min: 0 },
@@ -36,16 +39,13 @@ const attemptSchema = new mongoose.Schema({
   gradingVersion: { type: Number, default: 0, min: 0 },
 }, { timestamps: true });
 
-attemptSchema.index({ quiz: 1, rollNo: 1 }, { unique: true });
-// Legacy attempts without seatNumber are excluded until explicitly migrated.
-attemptSchema.index({ slot: 1, seatNumber: 1 }, {
+// A unique partial index permits historical roll-only attempts to remain
+// readable while migration is coordinated; new records require email.
+attemptSchema.index({ quiz: 1, email: 1 }, {
   unique: true,
-  partialFilterExpression: { seatNumber: { $type: "number" } },
+  partialFilterExpression: { email: { $type: "string" } },
 });
-attemptSchema.index({ slot: 1, status: 1 });
-// Admin results pagination reads a small page in immutable creation order.
 attemptSchema.index({ quiz: 1, _id: -1 });
-attemptSchema.index({ quiz: 1, slot: 1, _id: -1 });
 attemptSchema.index({ status: 1, expiresAt: 1 });
 
 export const Attempt = mongoose.model("Attempt", attemptSchema);

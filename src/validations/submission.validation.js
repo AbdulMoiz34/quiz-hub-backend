@@ -23,5 +23,5 @@ export const draftSchema = Joi.object({
 export const submissionSchema = Joi.object({
   version: Joi.number().integer().min(1).max(1_000_000).required(),
   answers,
-  reason: Joi.string().valid("student", "time_ended", "violation_limit").default("student"),
+  reason: Joi.string().valid("student", "time_ended").default("student"),
 });

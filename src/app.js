@@ -7,7 +7,6 @@ import { pathToFileURL } from "node:url";
 import { loadConfig } from "./config/env.js";
 import { connectDB, isDatabaseReady, disconnectDB } from "./config/db.js";
 import { Attempt } from "./models/attempt.model.js";
-import { Slot } from "./models/slot.model.js";
 import adminRoutes from "./routes/admin/index.js";
 import studentRoutes from "./routes/student/index.js";
 import { trustedOrigin } from "./middlewares/origin.middleware.js";
@@ -64,7 +63,13 @@ if (launchedDirectly) {
   try {
     await connectDB(config.mongoUri);
     // A database unique index is essential for the one-attempt rule.
-    await Promise.all([Attempt.init(), Slot.init()]);
+    await Attempt.init();
+    // An old unique {quiz,rollNo} index would reject all but one new
+    // email-based attempt per quiz. Never silently start in that state.
+    const indexes = await Attempt.collection.indexes();
+    if (indexes.some((index) => index.name === "quiz_1_rollNo_1")) {
+      throw new Error("Run npm run db:migrate:email-attempts before starting this API");
+    }
     const server = createApp(config).listen(config.port, config.host, () => {
       console.info(`Quiz Hub API listening at ${config.host}:${config.port}`);
     });
