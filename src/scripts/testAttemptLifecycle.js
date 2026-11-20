@@ -137,7 +137,7 @@ async function run() {
   }), 200, "resume started exam");
   assert.equal(current.attempt.id, first.data.id);
   assert.equal(current.quiz.durationMinutes, 60);
-  assert.equal(current.questions.length, 1);
+  assert.equal(current.questions.length, 2);
   assert.ok(!("correctAnswer" in current.questions[0]));
   assert.ok(!("timeSeconds" in current.questions[0]));
   assert.equal(current.draft.version, 0);
